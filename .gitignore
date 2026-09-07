@@ -1,0 +1,26 @@
+# macOS
+.DS_Store
+
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+xcuserdata/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.xcuserstate
+*.xcscmblueprint
+
+# XcodeGen: the .xcodeproj itself is generated from project.yml.
+# It is intentionally NOT ignored so the project is immediately
+# openable without requiring xcodegen as a prerequisite. Regenerate
+# with `xcodegen generate` after editing project.yml.
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Local secrets (must never exist in this repo; keys live in Keychain only)
+*.env
+Secrets.plist
