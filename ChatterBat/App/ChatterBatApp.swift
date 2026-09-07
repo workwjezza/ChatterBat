@@ -8,6 +8,8 @@ import SwiftUI
 /// scene so the app is buildable, launchable, and navigable end to end.
 @main
 struct ChatterBatApp: App {
+    private let dependencies = AppDependencies.live()
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -15,7 +17,7 @@ struct ChatterBatApp: App {
         .windowToolbarStyle(.unified)
 
         Settings {
-            SettingsView()
+            SettingsView(dependencies: dependencies)
         }
     }
 }

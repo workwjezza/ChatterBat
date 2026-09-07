@@ -73,10 +73,34 @@ App Sandbox entitlement with outgoing network client access, demo/preview
 fixtures explicitly labeled and isolated from any production path. See
 `docs/STATUS.md` for verification detail and known limitations.
 
-## Next stage: Stage 1 — Secure account connection
+## Stage 1 summary (complete)
 
-Implement Venice/OpenRouter settings UI, a Keychain service abstraction,
-add/replace/remove key flows, connection status, and non-billable
-credential verification where the provider API allows it. See the original
-brief §7–8 for provider endpoints and Keychain rules, and §11 Stage 1 for
-acceptance criteria.
+`AIService` domain enum; `CredentialStore`/`KeychainCredentialStore`
+(Security framework, per-service Keychain items, no iCloud sync);
+`HTTPClient`/`URLSessionHTTPClient` (ephemeral session, cross-host
+redirect blocking); `ConnectionChecking` with one implementation per
+service calling a verified non-billable, key-authenticating endpoint
+(`GET /api_keys/rate_limits` for Venice, `GET /api/v1/key` for
+OpenRouter — not the public `/models` catalog); `AccountSettingsViewModel`
++ `AccountsSettingsView` (new Settings → Accounts tab); `AppDependencies`
+factory wiring the real implementations into the app. 35/35 unit tests
+pass, including an isolated real-Keychain integration suite. See
+`docs/STATUS.md` for full detail, and `docs/DECISIONS.md` for why these
+specific endpoints and boundaries were chosen.
+
+Known gap carried into Stage 2: connection verification has only been
+tested against fixtures matching documented response shapes, not a live
+key — see STATUS.md limitation 3 for the recommended manual check.
+
+## Next stage: Stage 2 — Catalog and unified model picker
+
+Implement both model-catalog integrations (`GET /models` on each
+service), normalized identity/capabilities/pricing metadata, caching with
+visible cache age/offline state, and the real searchable model picker
+(replacing `ModelPickerPlaceholderView`) with favorites, recents, and
+service filters. This stage can reuse `HTTPClient`/`URLSessionHTTPClient`
+and the per-service credential access built in Stage 1, but needs its own
+per-service catalog DTOs (see Stage 1 decision on not sharing payload
+types across services). See the original brief §7 for catalog
+requirements and capability-model rules, and §11 Stage 2 for acceptance
+criteria.

@@ -2,19 +2,26 @@ import SwiftUI
 
 /// Native Settings scene.
 ///
-/// Stage 0 ships only a General pane confirming the Settings scene opens
-/// via ⌘, and the standard menu item. Stage 1 adds Venice/OpenRouter
-/// account panes with Keychain-backed key entry; no credential UI exists
-/// yet.
+/// General shows app version. Accounts (added in Stage 1) hosts
+/// Keychain-backed Venice/OpenRouter key entry, verification, and
+/// disconnect. No base-URL or other developer-facing fields are exposed
+/// here, per the brief.
 struct SettingsView: View {
+    let dependencies: AppDependencies
+
     var body: some View {
         TabView {
             GeneralSettingsView()
                 .tabItem {
                     Label("General", systemImage: "gearshape")
                 }
+
+            AccountsSettingsView(viewModel: dependencies.makeAccountSettingsViewModel())
+                .tabItem {
+                    Label("Accounts", systemImage: "person.badge.key")
+                }
         }
-        .frame(width: 420, height: 220)
+        .frame(width: 480, height: 420)
     }
 }
 
@@ -25,12 +32,9 @@ private struct GeneralSettingsView: View {
                 LabeledContent("Version", value: appVersionString)
             }
             Section {
-                Text(
-                    "Account connections for Venice and OpenRouter will appear " +
-                    "here in Stage 1."
-                )
-                .foregroundStyle(.secondary)
-                .font(.callout)
+                Text("Connect your Venice and OpenRouter accounts in the Accounts tab.")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
             }
         }
         .padding(20)
@@ -45,5 +49,28 @@ private struct GeneralSettingsView: View {
 }
 
 #Preview {
-    SettingsView()
+    // Uses in-memory fakes, not `.live()` — previews must never touch the
+    // real Keychain or network.
+    SettingsView(
+        dependencies: AppDependencies(
+            credentialStore: PreviewOnlyCredentialStore(),
+            veniceChecker: PreviewOnlyConnectionChecker(service: .venice),
+            openRouterChecker: PreviewOnlyConnectionChecker(service: .openRouter)
+        )
+    )
+}
+
+/// In-memory, no-op doubles used only by SwiftUI previews in this file.
+/// Never referenced from `AppDependencies.live()` or any production path.
+private struct PreviewOnlyCredentialStore: CredentialStore {
+    func saveKey(_ key: String, for service: AIService) throws {}
+    func loadKey(for service: AIService) throws -> String? { nil }
+    func deleteKey(for service: AIService) throws {}
+}
+
+private struct PreviewOnlyConnectionChecker: ConnectionChecking {
+    let service: AIService
+    func checkConnection(apiKey: String) async -> ConnectionCheckOutcome {
+        .valid(summary: "Connected (preview)")
+    }
 }

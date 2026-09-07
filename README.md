@@ -9,9 +9,11 @@ with an emphasis on fast, honest model switching.
 
 ## Current status
 
-Stage 0 (buildable native foundation) is complete. There is no provider
-networking, no account connection, and no chat functionality yet — see
-`docs/STATUS.md` for exactly what exists and what's next.
+Stages 0–1 are complete: a buildable native shell, plus Keychain-backed
+Venice/OpenRouter account connection with non-billable key verification
+(Settings → Accounts). There is no model catalog, no chat, and no
+persistence yet — see `docs/STATUS.md` for exactly what exists and what's
+next.
 
 ## Requirements
 
@@ -29,14 +31,17 @@ networking, no account connection, and no chat functionality yet — see
 
 ```
 ChatterBat/
-  App/            App entry point (ChatterBatApp.swift)
-  Domain/         Plain value types (Conversation, demo fixtures)
+  App/            App entry point + AppDependencies (production wiring)
+  Domain/         Plain value types (Conversation, AIService, ConnectionState, demo fixtures)
   Features/       SwiftUI views + view models, grouped by feature
   Persistence/     (empty until Stage 4 — SwiftData repository)
-  Services/        (empty until Stage 1 — Keychain, provider adapters)
+  Services/
+    Keychain/       CredentialStore protocol + Keychain implementation
+    Networking/     HTTPClient protocol + URLSession implementation
+    Providers/      Per-service connection verification (Venice, OpenRouter)
   Design/          (empty until shared design tokens are needed)
   Resources/       Entitlements, asset catalog
-ChatterBatTests/    XCTest unit tests
+ChatterBatTests/    XCTest unit tests (+ Fakes/ for in-memory test doubles)
 ChatterBatUITests/  XCUITest UI tests
 docs/               Development plan, status, and decisions
 project.yml         XcodeGen project specification (source of truth)
@@ -106,8 +111,10 @@ xcodebuild \
 
 ## Security and privacy posture
 
-- API keys are stored in the macOS Keychain only (Stage 1 onward). They are
-  never written to UserDefaults, SwiftData, logs, or source files.
+- API keys are stored in the macOS Keychain only. They are never written
+  to UserDefaults, SwiftData, logs, or source files. Verify your own key
+  in Settings → Accounts; ChatterBat never creates its own account with
+  either provider.
 - No telemetry. No hidden network calls. Requests go directly from this app
   to the service you selected (Venice or OpenRouter) — never through a
   ChatterBat-operated server, because there isn't one.

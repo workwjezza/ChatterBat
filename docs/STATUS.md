@@ -2,9 +2,65 @@
 
 ## Last completed stage
 
-**Stage 0 — Buildable native foundation.** Complete.
+**Stage 1 — Secure account connection.** Complete.
 
-## What's implemented
+## Stage 1 — what's implemented
+
+- `AIService` enum (`.venice`, `.openRouter`) with display name, pinned
+  API host, and the exact official key-management URL for each
+  (`https://venice.ai/settings/api`, `https://openrouter.ai/settings/keys`).
+- `CredentialStore` protocol + `KeychainCredentialStore` (Security
+  framework, generic password items scoped by a fixed `service` string and
+  per-`AIService` `account`, `.whenUnlockedThisDeviceOnly` accessibility,
+  no iCloud sync). Save/replace/delete/missing-item are all handled
+  explicitly; empty/whitespace-only keys are rejected before ever reaching
+  Keychain.
+- `HTTPClient` protocol + `URLSessionHTTPClient`: ephemeral session
+  (no disk cache, no cookie storage) and a redirect-blocking delegate that
+  refuses to follow any redirect to a host other than the one the client
+  was pinned to, so an `Authorization` header can never leak to another
+  host.
+- `ConnectionChecking` protocol + one implementation per service, each
+  calling a **non-billable, key-authenticating** endpoint (verified against
+  current provider docs, not assumed):
+  - `VeniceConnectionChecker` → `GET /api_keys/rate_limits`
+    (`https://docs.venice.ai/api-reference/endpoint/api_keys/rate_limits`).
+  - `OpenRouterConnectionChecker` → `GET /api/v1/key`
+    (`https://openrouter.ai/docs/api-reference/limits`).
+  Both map 401/403 → `.invalidCredential`, decode-failure/unexpected status
+  → `.unrecognizedResponse`, transport errors → `.transportFailure`, and
+  build a short, non-sensitive summary string from only the fields meant
+  for that purpose (credit/balance/tier) — never the raw body.
+- `AccountSettingsViewModel`: per-service `ConnectionState`
+  (notConfigured / checking / connected(summary) / invalidCredential /
+  error(message)), `saveAndVerify`, `verifyConnection`, `disconnect`, and
+  `refreshStoredKeyPresence` (which honestly reports "saved, not yet
+  verified" for a key that exists in Keychain from a prior session rather
+  than claiming it's connected or silently re-checking it over the network
+  on every launch).
+- `AccountsSettingsView`: one card per service — status row, `SecureField`
+  key entry, Save & Verify / Re-verify / Disconnect, a link to the
+  service's real key-management page, and an explanatory note that this
+  connects the user's *existing* account rather than creating a
+  ChatterBat-operated one. No base-URL field. Added as a new "Accounts"
+  tab in the Settings scene (General tab kept, now points to Accounts).
+- `AppDependencies`: a small factory (not a DI container) that assembles
+  the real `KeychainCredentialStore` + both `URLSessionHTTPClient`-backed
+  checkers for the running app; constructed once in `ChatterBatApp` and
+  passed into `SettingsView`. Tests and previews never use this — they
+  construct view models directly with fakes/in-memory doubles.
+- Test doubles added under `ChatterBatTests/Fakes/`:
+  `InMemoryCredentialStore`, `FakeConnectionChecker`, `FakeHTTPClient`
+  (+ `FakeTransportError`). None of these touch the real Keychain or
+  network.
+- New tests: `AccountSettingsViewModelTests` (8), and provider-checker
+  request/response-mapping tests: `OpenRouterConnectionCheckerTests` (8),
+  `VeniceConnectionCheckerTests` (5) — all using `FakeHTTPClient`, so zero
+  real network calls. `KeychainCredentialStoreTests` (7) is the one suite
+  that touches the real Keychain, using a randomized per-test-run
+  namespace and deleting everything it wrote in `tearDown`.
+
+## Stage 0 — what's implemented (carried forward)
 
 - XcodeGen-based project (`project.yml`) generating `ChatterBat.xcodeproj`
   with a shared `ChatterBat` scheme covering the app, unit tests, and UI
@@ -75,29 +131,47 @@ xcodebuild -project ChatterBat.xcodeproj -scheme ChatterBat \
   -destination 'platform=macOS' -derivedDataPath /tmp/ChatterBatDerivedData \
   -only-testing:ChatterBatTests test
 ```
-Result: **TEST SUCCEEDED** — 7/7 tests passed
-(`AppViewModelTests` × 5, `ConversationTests` × 2).
+Result (Stage 1, current): **TEST SUCCEEDED** — 35/35 tests passed across
+6 suites: `AccountSettingsViewModelTests` (8), `AppViewModelTests` (5),
+`ConversationTests` (2), `KeychainCredentialStoreTests` (7),
+`OpenRouterConnectionCheckerTests` (8), `VeniceConnectionCheckerTests` (5).
+Verified via `xcodebuild ... test | grep "Test Suite"` that every suite
+actually started and passed (i.e. `KeychainCredentialStoreTests` — the one
+suite touching the real Keychain — was not silently skipped).
 
 Full scheme test (`ChatterBatTests` + `ChatterBatUITests` together):
-Result: **FAILS** at the `ChatterBatUITests` load step only. Unit tests
-still ran and passed in the same invocation before the UI test bundle
-failed to load.
+Result: still **FAILS** at the `ChatterBatUITests` load step only (same
+root cause as Stage 0, unchanged by this stage's work — see Known
+Limitations). Unit tests still ran and passed in the same invocation
+before the UI test bundle failed to load.
 
 ## Manual verification performed
 
-- Launched the built `.app` directly (`open .../ChatterBat.app`);
+- Stage 0: launched the built `.app` directly (`open .../ChatterBat.app`);
   confirmed via `pgrep` that the process started and stayed running, and
   cleanly quit via AppleScript (`tell application "ChatterBat" to quit`)
-  with the process gone afterward. This confirms the app launches and
-  terminates normally end to end, not just that it compiles.
+  with the process gone afterward.
+- Stage 1: re-launched the rebuilt `.app` after adding the Accounts tab;
+  confirmed via `pgrep` it started successfully with no crash, then
+  terminated the instance this session launched. Did **not** click
+  through the Accounts UI interactively (no Screen Recording / UI
+  automation available in this shell — see limitation below), so the
+  *visual* correctness of the new Settings tab (layout, SecureField,
+  button states) is implemented and unit-tested but not eyeballed.
+- Confirmed no stray Keychain items after the full test run:
+  `security find-generic-password -s com.chatterbat.app.apikeys` reports
+  "item could not be found" (expected — no real key was ever saved
+  through the UI in this session), and a scan for any
+  `com.chatterbat.tests.*` namespace found zero leftovers, confirming
+  `KeychainCredentialStoreTests`' per-test cleanup worked.
 - Did **not** get a visual screenshot: `screencapture` failed with
   "could not create image from display" in this non-interactive shell
   environment (no Screen Recording permission granted to the invoking
   process). Layout correctness (split view, sidebar list, composer,
-  toolbar button placement) has **not** been visually confirmed — only
-  structurally implemented and unit-tested. Recommend a manual visual
-  pass in Xcode's own Run/Preview before Stage 1 sign-off, or granting
-  Screen Recording permission to whatever process runs these tools.
+  toolbar button placement, new Accounts tab) has **not** been visually
+  confirmed — only structurally implemented and unit-tested. Recommend a
+  manual visual pass in Xcode's own Run/Preview, or granting Screen
+  Recording permission to whatever process runs these tools.
 
 ## Known limitations
 
@@ -119,13 +193,33 @@ failed to load.
    Xcode auto-provision or run UI tests directly from within Xcode
    (⌘U with the ChatterBat scheme).
 2. No visual/screenshot confirmation of the UI layout (see above).
-3. Everything is in-memory/demo data by design at this stage — no
-   persistence, no networking, no credentials. This is expected for
-   Stage 0 and is not a defect.
+3. **Connection verification has not been exercised against the real
+   Venice/OpenRouter APIs with a live key.** Per the testing contract,
+   automated tests must never call paid or even non-billable live
+   endpoints, so `VeniceConnectionChecker`/`OpenRouterConnectionChecker`
+   are only verified against `FakeHTTPClient` fixtures matching the
+   *documented* response shapes for `GET /api_keys/rate_limits` and
+   `GET /api/v1/key`. If either provider's actual response shape has
+   drifted from current docs (retrieved during this stage — see
+   `docs/DEVELOPMENT_PLAN.md` for the exact doc URLs), the decode could
+   fail in practice even though it's correct against the documented
+   schema. **Action for a human:** paste a real key into Settings →
+   Accounts once and confirm "Save & Verify" shows a sensible connected
+   summary (this is intentionally a manual, explicitly-consented step —
+   not something this task should do automatically with a real credential).
+4. `AccountSettingsViewModel.refreshStoredKeyPresence()` does not
+   automatically re-verify a previously-saved-and-verified key on every
+   app launch (it only checks *presence*, reporting "saved, not yet
+   verified" until the user re-verifies or saves again). This is a
+   deliberate choice (see DECISIONS.md) to avoid a hidden network call on
+   every launch, but means the connected/green state does not persist
+   across relaunches by itself — only the underlying key does.
+5. Persistence (SwiftData), catalogs, and chat itself are still entirely
+   unimplemented — expected for Stage 1, not a defect.
 
 ## Next small task
 
-Begin Stage 1: Venice/OpenRouter account settings UI backed by a Keychain
-service abstraction, with add/replace/remove flows and non-billable
-connection verification where the provider API supports it. See
-`docs/DEVELOPMENT_PLAN.md` and the original brief §7–8 and §11 (Stage 1).
+Begin Stage 2: Venice/OpenRouter model catalog integration and the
+unified searchable model picker (replacing `ModelPickerPlaceholderView`),
+built on top of the now-real credential/connection layer from Stage 1.
+See `docs/DEVELOPMENT_PLAN.md` and the original brief §7 and §11 (Stage 2).
