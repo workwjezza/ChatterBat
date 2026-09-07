@@ -326,6 +326,76 @@ means `wouldShareHistoryAcrossServices` reflects genuine history-sharing
 that already happened, not a hypothetical. Verified in
 `testWouldShareHistoryAcrossServicesDetectsSwitchOnlyAfterAMessageExists`.
 
+## Stage 4
+
+### File-scope `@Model` classes, plain `conversationID` foreign key, no `#Predicate`/`sortBy:`
+
+**Decision:** `PersistedConversation`/`PersistedMessage` are declared at
+file scope (not nested inside `ChatterBatSchemaV1`); `PersistedMessage`
+has a plain `conversationID: UUID` column instead of a SwiftData
+`@Relationship`; every `SwiftDataConversationRepository` query does an
+unfiltered `context.fetch(FetchDescriptor<T>())` followed by Swift-side
+`.filter`/`.sorted`, never a `#Predicate` or `sortBy:` argument on the
+descriptor.
+
+**Why:** All three were empirically proven, via bisection with minimal
+standalone reproduction apps and real crash-report analysis, to
+reproducibly crash the app with EXC_BREAKPOINT at launch on this exact
+toolchain (Xcode 26.6, macOS 26.6.2, Swift 6.3.3) — specifically the
+`@Relationship` combined with predicate/sortBy usage; un-nesting the
+`@Model` classes was tried first and didn't fix it alone, but is kept
+since it's a reasonable file organization regardless. See
+`docs/STATUS.md`'s "SwiftData crash story" for the full bisection
+narrative. This is a deliberate, documented deviation from Apple's
+commonly-shown sample code, not an oversight — do not "modernize" this
+back to relationships/predicates without first re-verifying on a
+different toolchain version that the underlying bug is actually fixed.
+
+### Persistence tests construct SwiftData state inline, never via `setUp()`/`tearDown()` or a helper function
+
+**Decision:** Every test in `SwiftDataConversationRepositoryTests`/
+`SwiftDataConversationRepositoryAdditionalTests` calls
+`ChatterBatModelContainer.inMemory()` and constructs
+`SwiftDataConversationRepository` directly in the test method body.
+No `override func setUp()`, no `private func makeRepository()` helper.
+
+**Why:** Both alternatives were proven, via the same bisection process,
+to hang every single test for ~20 seconds (until XCTest's timeout killed
+and relaunched the test host) on this toolchain — while byte-identical
+code inlined directly in the test method ran in single-digit
+milliseconds. This looks like a debugger/test-runner instrumentation
+interaction specific to calling into `ModelContainer`/`ModelContext`
+construction through any intermediate function under XCTest's `-Onone`
+build on this toolchain, not a flaw in the production code (the
+production `AppDependencies.live()` code path, which also calls through
+a function, does not hang — only the *test-runner* context reproduces
+it). The resulting duplication across test methods is intentional and
+should not be "cleaned up" into a shared helper without first
+re-verifying against a real timed test run.
+
+### Initial conversation-list fetch and interrupted-generation recovery happen synchronously in `AppDependencies.live()`, not in any SwiftUI view lifecycle hook
+
+**Decision:** `AppDependencies.live()` calls
+`chatCoordinator.markInterruptedGenerationsAtLaunch()` and
+`repository.loadAllConversations()` synchronously, before returning,
+and before `ChatterBatApp.body` is ever evaluated. `RootView.init`
+receives the already-fetched list via
+`AppViewModel.attachRepository(_:initialConversations:)` and never
+itself calls into SwiftData. `.task {}`, `.onAppear` (even with a
+`DispatchQueue.main.async` deferral), and a plain `RootView.init` that
+fetches directly were all tried and reproducibly crashed at launch.
+
+**Why:** The crash trace consistently showed the fetch happening during
+AppKit's window-restoration re-entrancy
+(`_reopenWindowsAsNecessaryIncludingRestorableState` in the stack).
+Moving the fetch to before any `View` exists at all — inside the plain
+synchronous factory function that constructs the app's dependencies —
+sidesteps that re-entrant window entirely and was the only placement
+that never crashed across many repeated real launches. This does mean
+`AppDependencies.live()` does synchronous disk I/O on the main thread
+at startup; given the expected data volume (one user's local chat
+history) this is an acceptable trade-off for correctness.
+
 ### Retry removes and re-sends rather than replaying stored request state
 
 **Decision:** `retryLastTurn` pops the failed assistant message and the

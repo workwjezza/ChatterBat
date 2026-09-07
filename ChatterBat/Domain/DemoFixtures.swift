@@ -13,12 +13,12 @@ enum DemoFixtures {
         [
             Conversation(
                 title: "Welcome to ChatterBat",
-                preview: "This is placeholder content for the Stage 0 shell.",
+                lastMessagePreview: "This is placeholder content for previews and tests only.",
                 updatedAt: .now
             ),
             Conversation(
                 title: "Sample conversation",
-                preview: "Streaming chat arrives in Stage 3.",
+                lastMessagePreview: "Real persistence arrives via ConversationRepository (Stage 4).",
                 updatedAt: .now.addingTimeInterval(-3_600)
             )
         ]

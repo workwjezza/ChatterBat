@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// Real streaming chat surface as of Stage 3: transcript, composer with
-/// Send/Stop, and a toolbar model selector.
+/// Real streaming chat surface: transcript, composer with Send/Stop, and
+/// a toolbar model selector. Transcripts are persisted via
+/// `ChatCoordinator`'s `ConversationRepository` (Stage 4) — this view
+/// itself has no persistence awareness.
 ///
-/// Markdown/code-block rendering, copy actions, and persistence are
-/// later stages (5 and 4 respectively) — this stage renders plain text
-/// and keeps everything in memory via `ChatCoordinator`.
+/// Markdown/code-block rendering and copy actions are Stage 5.
 struct ConversationDetailView: View {
     let conversation: Conversation
     var viewModel: AppViewModel
@@ -60,6 +60,12 @@ struct ConversationDetailView: View {
                 "This conversation's existing history was sent to a different service. " +
                 "Sending now will share that history with \(pendingServiceSwitchModel?.service.displayName ?? "this service") too."
             )
+        }
+        .onChange(of: coordinator.messages(for: conversation.id)) { _, _ in
+            // Keeps the sidebar's preview/updatedAt in sync as messages
+            // are appended/checkpointed, without the sidebar needing to
+            // poll or duplicate ChatCoordinator's persistence logic.
+            viewModel.refreshConversationMetadata(conversationID: conversation.id)
         }
     }
 

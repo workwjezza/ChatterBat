@@ -2,7 +2,142 @@
 
 ## Last completed stage
 
-**Stage 3 — Reliable streaming chat.** Complete.
+**Stage 4 — Durable conversation history.** Complete.
+
+## Stage 4 — what's implemented
+
+- SwiftData schema: `PersistedConversation`/`PersistedMessage` (plain
+  file-scope `@Model` classes — NOT nested inside the `VersionedSchema`
+  enum; see the crash story below), referenced by `ChatterBatSchemaV1`
+  (`VersionedSchema`) and `ChatterBatMigrationPlan` (`SchemaMigrationPlan`,
+  currently zero stages since there's only one schema version). Messages
+  reference their conversation via a plain `conversationID: UUID` column
+  — NOT a SwiftData `@Relationship` (also part of the crash story).
+- `ChatterBatModelContainer.live()` (real on-disk store) /
+  `.inMemory()` (isolated, for tests/previews).
+- `ConversationRepository` protocol (`@MainActor`, exposes only plain
+  `Sendable` `Conversation`/`TranscriptMessage` — SwiftData model
+  instances never cross this boundary, per the brief) +
+  `SwiftDataConversationRepository`: `loadAllConversations`,
+  `loadMessages`, `createConversation`, `rename`, `deleteConversation`
+  (explicit cascade-delete of messages), `appendMessage`,
+  `updateMessage`, `deleteMessage`, `interruptAllStreamingMessages`.
+  Every query does an unfiltered `FetchDescriptor` fetch followed by
+  Swift-side `.filter`/`.sorted` — no `#Predicate`, no `sortBy:` — see
+  the crash story below for why.
+- `MessageStatusCoding`: encodes/decodes `MessageStatus` to/from the
+  plain string columns SwiftData stores; an unrecognized raw value
+  decodes to `.interrupted` (an honest "needs attention" state) rather
+  than crashing or guessing `.completed`.
+- `ChatCoordinator` now persists through an optional
+  `ConversationRepository`: `send` persists the user+assistant messages
+  synchronously before the network call starts; streaming checkpoints
+  the assistant message to the repository every `checkpointInterval`
+  content-delta events (default 20 — "not on every token" per the
+  brief) with an unconditional final write on every terminal state
+  (completed/cancelled/failed); `retryLastTurn` deletes the failed
+  pair from the repository (not just the in-memory transcript) before
+  re-sending; `markInterruptedGenerationsAtLaunch()` delegates to the
+  repository. `messages(for:)` lazily loads a conversation's transcript
+  from the repository on first access per session.
+- `AppViewModel` now has `attachRepository(_:initialConversations:)` —
+  the production path, which takes an already-fetched conversation list
+  rather than fetching itself (see crash story) — plus the older
+  `loadFromRepository(_:)` (kept for flexibility/tests, but production
+  code uses `attachRepository`). `startNewConversation`/`delete`/`rename`
+  all write through to the repository when one is attached, falling back
+  to in-memory-only behavior when not (previews/some tests).
+  `refreshConversationMetadata(conversationID:)` re-reads one
+  conversation's preview/`updatedAt` and re-sorts the list — called from
+  `ConversationDetailView.onChange` whenever that conversation's
+  messages change, so the sidebar reflects new activity without polling.
+- `Conversation.preview` renamed to `lastMessagePreview` throughout
+  (domain type, SwiftData column, `SidebarView`, fixtures, tests) for
+  clarity now that it's a real persisted, message-derived field rather
+  than a Stage 0 placeholder string.
+- `AppDependencies.live()` now constructs the real SwiftData container/
+  repository, runs `markInterruptedGenerationsAtLaunch()`, and fetches
+  the initial conversation list — all synchronously, before
+  `ChatterBatApp.body` is even evaluated (see crash story for why this
+  specific placement matters). `RootView.init` passes that pre-fetched
+  list into `AppViewModel.attachRepository` — `RootView` itself never
+  calls into SwiftData.
+- New tests (11): `SwiftDataConversationRepositoryTests` (6),
+  `SwiftDataConversationRepositoryAdditionalTests` (5) — both using
+  `ChatterBatModelContainer.inMemory()`, constructed fully inline in
+  every test method (see crash story: no `setUp()`, no helper function).
+
+### The SwiftData crash story (important — read before touching `Persistence/`)
+
+This stage hit a serious, toolchain-specific SwiftData bug (Xcode 26.6 /
+macOS 26.6.2, Swift 6.3.3) that cost most of this session's time and is
+recorded here in detail so it is never accidentally reintroduced.
+
+**Symptom 1 — app crashes at launch (EXC_BREAKPOINT / SIGTRAP) the
+moment any view fetches from SwiftData**, but only once the on-disk
+store contains rows and/or under certain launch timings. Root cause,
+found by bisection with a series of minimal standalone reproduction
+apps (built and run outside the ChatterBat project) and reading actual
+crash reports via `python3` JSON parsing of `~/Library/Logs/
+DiagnosticReports/ChatterBat-*.ips`:
+- Nesting `@Model` classes inside the `VersionedSchema` enum body
+  (Apple's commonly-shown sample pattern) was suspected first and
+  un-nested to file scope — this did **not** fix it, but is kept as the
+  file layout anyway since it's arguably cleaner and rules out that
+  hypothesis for good.
+- Using a SwiftData `@Relationship(deleteRule:inverse:)` between
+  `PersistedConversation` and `PersistedMessage`, combined with
+  `#Predicate`/`sortBy:` FetchDescriptors, was the actual trigger.
+  Replacing the relationship with a plain `conversationID: UUID` column
+  and replacing every `#Predicate`/`sortBy:` FetchDescriptor with an
+  unfiltered fetch + Swift-side `.filter`/`.sorted` eliminated the
+  crash entirely, verified across many consecutive real `open`-launches
+  (not just `xcodebuild build`) with a real, non-empty on-disk store.
+
+**Symptom 2 — after fixing the app-launch crash, the new persistence
+*unit tests* still failed**, but as **hangs** (each test took ~20–22s
+then XCTest logged "Restarting after unexpected exit, crash, or test
+timeout" and relaunched for the next test), not crashes. Root cause,
+found the same way (minimal repro tests added and removed from
+`ChatterBatTests` during bisection):
+- `setUp()`/`tearDown()` overriding a stored `SwiftDataConversationRepository`
+  instance property hung every test.
+- Removing `setUp`/`tearDown` but calling a `private func
+  makeRepository()` helper (even `@MainActor`, even called correctly)
+  **also hung**.
+- The exact same container/repository construction code, inlined
+  directly in the test method body with no `setUp` and no helper
+  function, passed in single-digit milliseconds.
+- This reproduces with a free (non-member) helper function too, so it
+  is not specific to instance methods. It looks like a toolchain/
+  debugger-instrumentation interaction specific to calling into
+  `ModelContainer`/`ModelContext` construction through any intermediate
+  function under XCTest's `-Onone` test-runner instrumentation on this
+  toolchain — not a bug in the production code.
+- Fix: every persistence test in `SwiftDataConversationRepositoryTests`/
+  `SwiftDataConversationRepositoryAdditionalTests` constructs its
+  container and repository **inline**, directly in the test method,
+  with no `setUp`, no `tearDown`, and no wrapping helper function. This
+  is intentionally duplicated across tests rather than factored out —
+  see the doc comment at the top of both files, which explicitly warns
+  against "cleaning up" this duplication without re-verifying against a
+  real timed run first.
+
+**Practical implications for future stages:**
+- Prefer plain foreign-key columns over `@Relationship` for any new
+  persisted model until this is re-verified as fixed on a newer
+  toolchain.
+- Prefer unfiltered fetch + Swift-side filtering over `#Predicate`/
+  `sortBy:` FetchDescriptors for the same reason. This is a real,
+  measured performance trade-off (O(n) client-side filtering instead of
+  a store-level query), acceptable at the expected scale of one user's
+  local chat history, but worth revisiting if conversation/message
+  counts ever grow large.
+- Never wrap SwiftData container/context construction in a helper
+  function inside a test file. Inline it, every time, in every test.
+- If a future stage's manual/automated testing shows an inexplicable
+  hang or crash touching `Persistence/`, re-read this section before
+  assuming it's a new bug.
 
 ## Stage 3 — what's implemented
 
@@ -90,6 +225,19 @@
   IDs, cross-service disclosure only after a real message exists, and a
   cancelled message's content being excluded from the next request's
   context.
+- Stage 4: extensive manual launch verification given the crash story
+  above — real `open`-launches (not just `xcodebuild build`, which
+  does not exercise the sandboxed launch path or AppKit window
+  restoration where the original crash occurred) of the actual signed
+  app bundle, repeated across a completely fresh container, a container
+  with real accumulated conversation/message rows, and multiple
+  consecutive quit/relaunch cycles — all via `open` +
+  `osascript ... quit` (not raw process kill, so real AppKit
+  termination/restoration paths are exercised) — with zero crashes and
+  zero entries in `~/Library/Logs/DiagnosticReports/` after the fix.
+  Cleared the on-disk store (`~/Library/Containers/com.chatterbat.app/
+  Data/Library/Application Support/default.store*`) before finishing
+  this stage so the next manual run starts from a clean slate.
 
 ## Stage 2 — what's implemented
 
@@ -285,13 +433,13 @@ xcodebuild -project ChatterBat.xcodeproj -scheme ChatterBat \
   -destination 'platform=macOS' -derivedDataPath /tmp/ChatterBatDerivedData \
   -only-testing:ChatterBatTests test
 ```
-Result (Stage 3, current): **TEST SUCCEEDED** — 99/99 tests passed across
-17 suites (see Stage 3 section above for the 5 new suites; carried-forward
-suites from Stages 0–2 all still pass unchanged). Verified via
-`xcodebuild ... test | grep "Test Suite"` that every suite actually
-started and passed, and re-ran the full suite **3 times in a row** to
-check for flakiness in the timing-sensitive `ChatCoordinator` tests
-(cancellation races) — all 3 runs passed with 99/99.
+Result (Stage 4, current): **TEST SUCCEEDED** — 121/121 tests passed
+(11 new from Stage 4: `SwiftDataConversationRepositoryTests` (6) +
+`SwiftDataConversationRepositoryAdditionalTests` (5); all Stage 0–3
+suites still pass unchanged). Re-ran the full suite **3 times in a row**
+after the SwiftData fix — all 3 runs passed with 121/121 in 1.5–1.8s
+total, with zero hangs and zero new crash reports in
+`~/Library/Logs/DiagnosticReports/`.
 
 Full scheme test (`ChatterBatTests` + `ChatterBatUITests` together):
 Result: still **FAILS** at the `ChatterBatUITests` load step only (same
@@ -396,9 +544,10 @@ before the UI test bundle failed to load.
    deliberate choice (see DECISIONS.md) to avoid a hidden network call on
    every launch, but means the connected/green state does not persist
    across relaunches by itself — only the underlying key does.
-5. Persistence (SwiftData) is still entirely unimplemented — everything
-   in `ChatCoordinator`/`AppViewModel` is in-memory only and is lost on
-   quit. Expected before Stage 4, not a defect.
+5. ~~Persistence (SwiftData) is still entirely unimplemented~~ — **now
+   implemented as of Stage 4.** Left here (struck through) rather than
+   deleted so the stage-by-stage history stays legible; see the Stage 4
+   section above for what's actually implemented.
 6. **Catalog fetchers have not been exercised against the real
    Venice/OpenRouter `/models` endpoints with a live key**, for the same
    reason as limitation 3 (tests must never call live endpoints). Fixture
@@ -453,14 +602,39 @@ before the UI test bundle failed to load.
     there is no dedicated test for the "does nothing when the shape is
     unexpected" case specifically; only the standard success path is
     tested.
+12. **`ConversationDetailView`'s `.onChange`-triggered
+    `refreshConversationMetadata` (which calls
+    `repository.loadAllConversations()` from a live view, after Send)
+    has not been exercised with a real repository + real chat
+    completion** — only indirectly, since it requires an actual
+    provider key to trigger (see limitation 9). Given the crash story
+    above was specifically about *launch-time* SwiftData fetches from
+    views, and this fetch happens well after launch in response to a
+    genuine user action, it is expected to be safe by the same
+    reasoning that fixed `RootView`/`AppDependencies` — but this
+    specific call path has not been directly, manually confirmed with a
+    live key. **Action for a human:** send a real message and confirm
+    the sidebar's preview/ordering updates without any crash or hang.
+13. No SwiftData migration has ever actually been exercised (there is
+    only one schema version, and `ChatterBatMigrationPlan.stages` is
+    empty). The plumbing exists (`ChatterBatSchemaV1`,
+    `ChatterBatMigrationPlan`) but is entirely unverified beyond "it
+    doesn't crash with zero migration stages" — a real migration stage
+    should be added and tested from a v1-populated store the first time
+    the schema actually changes, not assumed to work by inspection.
+14. Given the SwiftData relationship/predicate/sortBy issues found this
+    stage, other untested `FetchDescriptor` usages elsewhere in the
+    codebase were not searched for (there are none currently — all
+    persistence access goes through `SwiftDataConversationRepository`
+    — but this is worth re-confirming if `Persistence/` grows).
 
 ## Next small task
 
-Begin Stage 4: durable conversation history — a SwiftData schema and
-repository, wiring `AppViewModel`/`ChatCoordinator` to persist
-conversations/messages/favorites instead of holding them only in memory,
-rename/delete/search against real storage, generation checkpoints so a
-relaunch marks any still-`.streaming` message `.interrupted` (not lost or
-silently resumed), and persistence tests using an isolated/in-memory
-SwiftData store. See `docs/DEVELOPMENT_PLAN.md` and the original brief §8
-(Persistence and security) and §11 (Stage 4).
+Begin Stage 5: native polish and MVP release gate — a deliberate
+Markdown/code-block rendering subset, copy actions, refined composer,
+first-run onboarding, empty/loading/offline/error states, full keyboard
+navigation and accessibility labels, light/dark appearance checks, and
+long-transcript performance. This is the last stage before the
+chat-first MVP is considered complete. See `docs/DEVELOPMENT_PLAN.md`
+and the original brief §9 (Markdown and message rendering), §5 (UX
+specification), and §11 (Stage 5).

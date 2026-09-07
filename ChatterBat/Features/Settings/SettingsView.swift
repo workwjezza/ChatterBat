@@ -67,7 +67,9 @@ private struct GeneralSettingsView: View {
             chatCoordinator: ChatCoordinator(
                 credentialStore: store,
                 clients: [.venice: veniceChat, .openRouter: openRouterChat]
-            )
+            ),
+            conversationRepository: PreviewOnlyRepository(),
+            initialConversations: []
         )
     )
 }
@@ -108,4 +110,17 @@ private struct PreviewOnlyChatClient: ChatStreamingClient {
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         AsyncThrowingStream { $0.finish() }
     }
+}
+
+@MainActor
+private final class PreviewOnlyRepository: ConversationRepository {
+    func loadAllConversations() throws -> [Conversation] { [] }
+    func loadMessages(for conversationID: UUID) throws -> [TranscriptMessage] { [] }
+    func createConversation(title: String) throws -> Conversation { Conversation(title: title) }
+    func rename(conversationID: UUID, to newTitle: String) throws {}
+    func deleteConversation(conversationID: UUID) throws {}
+    func appendMessage(_ message: TranscriptMessage, toConversation conversationID: UUID) throws {}
+    func updateMessage(_ message: TranscriptMessage, inConversation conversationID: UUID) throws {}
+    func deleteMessage(_ messageID: UUID, fromConversation conversationID: UUID) throws {}
+    func interruptAllStreamingMessages() throws {}
 }

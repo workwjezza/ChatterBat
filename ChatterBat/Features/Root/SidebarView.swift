@@ -73,7 +73,7 @@ private struct ConversationRow: View {
             Text(conversation.title)
                 .font(.body)
                 .lineLimit(1)
-            Text(conversation.preview)
+            Text(conversation.lastMessagePreview)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

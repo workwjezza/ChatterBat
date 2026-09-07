@@ -134,13 +134,35 @@ Known gap carried into Stage 4: no real chat completion has been sent to
 either live provider yet — see STATUS.md limitation 9 for the recommended
 manual check.
 
-## Next stage: Stage 4 — Durable conversation history
+## Stage 4 summary (complete)
 
-Implement a SwiftData schema and repository; wire `AppViewModel`'s
-conversation list and `ChatCoordinator`'s transcripts to real persistence
-instead of in-memory-only state; rename/delete/search against storage;
-generation checkpoints so a relaunch marks any message still `.streaming`
-as `.interrupted` rather than silently losing or resuming it; persistence
-tests using an isolated/in-memory SwiftData container. See the original
-brief §8 (Persistence and security) and §11 Stage 4 for acceptance
+SwiftData schema (`PersistedConversation`/`PersistedMessage`,
+`ChatterBatSchemaV1`/`ChatterBatMigrationPlan`) and
+`ConversationRepository`/`SwiftDataConversationRepository`;
+`ChatCoordinator` now persists on send/checkpoint/terminal-state/retry
+and recovers interrupted generations at launch; `AppViewModel` writes
+through to the repository for create/rename/delete. 121/121 unit tests
+pass. This stage also uncovered and fixed a serious toolchain-specific
+SwiftData crash/hang bug — **read `docs/STATUS.md`'s "SwiftData crash
+story" and `docs/DECISIONS.md`'s Stage 4 entries before modifying
+anything in `Persistence/` or its tests.** In short: no
+`@Relationship`, no `#Predicate`/`sortBy:` FetchDescriptors, no
+SwiftData construction inside `setUp()`/`tearDown()` or a wrapping
+helper function, and the initial launch-time fetch happens synchronously
+in `AppDependencies.live()`, not in any SwiftUI view lifecycle hook.
+
+Known gaps carried into Stage 5: the `.onChange`-triggered sidebar
+refresh after a real Send has not been manually confirmed with a live
+key (STATUS.md limitation 12); no real schema migration has ever been
+exercised (limitation 13).
+
+## Next stage: Stage 5 — Native polish and MVP release gate
+
+Implement a deliberate Markdown/code-block rendering subset, copy
+actions, a refined composer, first-run onboarding, empty/loading/
+offline/error states, full keyboard navigation and accessibility
+labels, light/dark appearance, and long-transcript performance. This
+stage completes the chat-first MVP (Stages 0–5) — do not delay it for
+Stage 6/7 features. See the original brief §5 (UX specification), §9
+(Markdown and message rendering), and §11 Stage 5 for acceptance
 criteria.

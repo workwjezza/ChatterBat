@@ -3,8 +3,8 @@ import XCTest
 
 final class ConversationTests: XCTestCase {
     func testConversationsWithDifferentIDsAreNotEqual() {
-        let a = Conversation(title: "Same Title", preview: "a")
-        let b = Conversation(title: "Same Title", preview: "a")
+        let a = Conversation(title: "Same Title", lastMessagePreview: "a")
+        let b = Conversation(title: "Same Title", lastMessagePreview: "a")
 
         XCTAssertNotEqual(a, b, "Identity is by UUID, not by title/preview content.")
     }

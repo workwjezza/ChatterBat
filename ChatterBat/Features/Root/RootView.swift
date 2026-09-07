@@ -9,7 +9,20 @@ import SwiftUI
 /// choose a model for the next message.
 struct RootView: View {
     let dependencies: AppDependencies
-    @State private var viewModel = AppViewModel()
+    @State private var viewModel: AppViewModel
+
+    init(dependencies: AppDependencies) {
+        self.dependencies = dependencies
+        // Attaches the repository plus the conversation list that
+        // AppDependencies.live() already fetched synchronously before
+        // any view existed — this init never itself calls SwiftData.
+        // See AppViewModel.attachRepository's doc comment and
+        // docs/DECISIONS.md for why the fetch cannot safely happen here
+        // or in any later view lifecycle hook on this toolchain.
+        let viewModel = AppViewModel()
+        viewModel.attachRepository(dependencies.conversationRepository, initialConversations: dependencies.initialConversations)
+        _viewModel = State(initialValue: viewModel)
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -56,7 +69,9 @@ struct RootView: View {
                     .venice: PreviewOnlyChatClient(service: .venice),
                     .openRouter: PreviewOnlyChatClient(service: .openRouter)
                 ]
-            )
+            ),
+            conversationRepository: PreviewOnlyRepository(),
+            initialConversations: DemoFixtures.conversations
         )
     )
 }
@@ -96,4 +111,17 @@ private struct PreviewOnlyChatClient: ChatStreamingClient {
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         AsyncThrowingStream { $0.finish() }
     }
+}
+
+@MainActor
+private final class PreviewOnlyRepository: ConversationRepository {
+    func loadAllConversations() throws -> [Conversation] { DemoFixtures.conversations }
+    func loadMessages(for conversationID: UUID) throws -> [TranscriptMessage] { [] }
+    func createConversation(title: String) throws -> Conversation { Conversation(title: title) }
+    func rename(conversationID: UUID, to newTitle: String) throws {}
+    func deleteConversation(conversationID: UUID) throws {}
+    func appendMessage(_ message: TranscriptMessage, toConversation conversationID: UUID) throws {}
+    func updateMessage(_ message: TranscriptMessage, inConversation conversationID: UUID) throws {}
+    func deleteMessage(_ messageID: UUID, fromConversation conversationID: UUID) throws {}
+    func interruptAllStreamingMessages() throws {}
 }
