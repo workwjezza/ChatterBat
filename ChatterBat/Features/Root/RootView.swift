@@ -2,11 +2,11 @@ import SwiftUI
 
 /// Top-level split-view shell.
 ///
-/// Sidebar shows the (currently in-memory/demo) conversation list; the
-/// detail pane shows a placeholder conversation surface. Real streaming
-/// chat arrives in Stage 3. As of Stage 2, the model picker (⌘K) is real:
-/// it fetches live/cached Venice and OpenRouter catalogs and lets the
-/// user choose a model for the next message.
+/// Sidebar shows the (currently in-memory/demo) conversation list. The
+/// detail pane hosts real streaming chat as of Stage 3, backed by the
+/// shared `ChatCoordinator` in `dependencies`. The model picker (⌘K)
+/// fetches live/cached Venice and OpenRouter catalogs and lets the user
+/// choose a model for the next message.
 struct RootView: View {
     let dependencies: AppDependencies
     @State private var viewModel = AppViewModel()
@@ -16,7 +16,11 @@ struct RootView: View {
             SidebarView(viewModel: viewModel)
         } detail: {
             if let conversation = viewModel.selectedConversation {
-                ConversationDetailView(conversation: conversation, viewModel: viewModel)
+                ConversationDetailView(
+                    conversation: conversation,
+                    viewModel: viewModel,
+                    coordinator: dependencies.chatCoordinator
+                )
             } else {
                 ContentUnavailableView(
                     "No Conversation Selected",
@@ -35,14 +39,24 @@ struct RootView: View {
 }
 
 #Preview("Root — Demo Data") {
+    let store = PreviewOnlyStore()
     RootView(
         dependencies: AppDependencies(
-            credentialStore: PreviewOnlyStore(),
+            credentialStore: store,
             veniceChecker: PreviewOnlyChecker(service: .venice),
             openRouterChecker: PreviewOnlyChecker(service: .openRouter),
             veniceCatalogFetcher: PreviewOnlyFetcher(service: .venice),
             openRouterCatalogFetcher: PreviewOnlyFetcher(service: .openRouter),
-            modelPreferencesStore: PreviewOnlyPreferences()
+            modelPreferencesStore: PreviewOnlyPreferences(),
+            veniceChatClient: PreviewOnlyChatClient(service: .venice),
+            openRouterChatClient: PreviewOnlyChatClient(service: .openRouter),
+            chatCoordinator: ChatCoordinator(
+                credentialStore: store,
+                clients: [
+                    .venice: PreviewOnlyChatClient(service: .venice),
+                    .openRouter: PreviewOnlyChatClient(service: .openRouter)
+                ]
+            )
         )
     )
 }
@@ -71,4 +85,15 @@ private final class PreviewOnlyPreferences: ModelPreferencesStore {
     func setFavorite(_ identity: ModelIdentity, isFavorite: Bool) {}
     func recentIdentities() -> [ModelIdentity] { [] }
     func recordUsed(_ identity: ModelIdentity) {}
+}
+
+private struct PreviewOnlyChatClient: ChatStreamingClient {
+    let service: AIService
+    func streamChatCompletion(
+        apiKey: String,
+        modelID: String,
+        messages: [OutgoingChatMessage]
+    ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
 }

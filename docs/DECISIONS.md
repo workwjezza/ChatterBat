@@ -238,3 +238,108 @@ calls without explicit intent — an unconnected service shouldn't generate
 background traffic just because the user opened the picker. Verified in
 `testServiceWithNoStoredKeyIsMarkedNotConfiguredWithoutFetching` via the
 fetcher's `fetchCount`.
+
+## Stage 3
+
+### One shared `ChatStreamingClient` implementation for both services, unlike catalog/connection decoding
+
+**Decision:** `StandardChatStreamingClient` is a single, non-provider-
+specific type, parameterized only by `service` (for labeling) and
+`endpointURL`. Both Venice's and OpenRouter's `AppDependencies` chat
+clients are instances of the same type.
+
+**Why:** This looks inconsistent with the Stage 2 decision to keep
+`VeniceModelCatalogFetcher`/`OpenRouterModelCatalogFetcher` fully
+separate, but the underlying facts are genuinely different here: catalog
+responses have provider-specific fields and pricing units (verified
+different in Stage 2), while plain-text chat completions from both
+services use the same OpenAI-compatible
+`{"choices":[{"delta":{...},"finish_reason":...}],"usage":...}` SSE
+chunk shape — this is exactly why "OpenAI-compatible" is a meaningful
+claim both providers' docs make. Sharing the implementation here reflects
+a real shared contract, not an assumption of similarity. If Stage 6 adds
+provider-specific request fields (`venice_parameters`, OpenRouter
+`provider` routing), those get added at the request-building layer
+(`ChatRequestBuilder` or a provider-specific variant of it), not by
+forking the streaming/decoding logic itself, since the response shape
+contract remains shared.
+
+### Sent `stream_options.include_usage: true` on every request
+
+**Decision:** `ChatRequestBuilder` always includes
+`"stream_options": {"include_usage": true}`.
+
+**Why:** Verified in Venice's own documented example request body
+(`https://docs.venice.ai/api-reference/endpoint/chat/completions`) that
+this exact field is accepted. OpenRouter's SDK streaming example reads
+`chunk.usage` directly off the final chunk without showing this field
+being set explicitly, suggesting it may default to included for
+OpenRouter — but since sending it explicitly is documented-safe for
+Venice and is the standard OpenAI-compatible way to request this, sending
+it unconditionally on both requests is the safer choice than guessing
+provider-specific default behavior.
+
+### Treated a stream ending with no `finished`/`usage` event as an error (`.prematureDisconnect`)
+
+**Decision:** `StandardChatStreamingClient.run` throws
+`ChatRequestError.prematureDisconnect` if the byte stream ends (clean
+EOF) without ever having observed a `.finished` or `.usage` decoded
+event.
+
+**Why:** The brief explicitly calls out "premature disconnects" as a
+streaming failure mode distinct from a clean finish. Without this check,
+a connection that silently drops mid-response (network blip, provider
+timeout) would look identical to a successful completion that happened
+to have a short response — the assistant message would just be marked
+`.completed` with whatever partial text arrived, misrepresenting a
+failure as success. This is tested directly in
+`testPrematureDisconnectWithNoFinishOrUsageThrows`.
+
+### `ChatCoordinator` scopes every mutation to (conversationID, messageID) pairs, not a single "current" pointer
+
+**Decision:** All transcript mutations go through a private `update(_
+messageID:, in conversationID:, _:)` helper that looks up the specific
+message by ID within the specific conversation's array, rather than the
+coordinator holding a single "currently streaming message" reference.
+
+**Why:** The brief requires that switching conversations cannot redirect
+incoming text into another chat, and that repeated Send cannot create
+unintended duplicate requests. Scoping by both IDs together means even
+if two streams were somehow active in overlapping windows (shouldn't
+happen given the single global `generationState`, but this makes it safe
+regardless of that invariant holding), a stale event from one stream
+can never mutate a different conversation's message. Verified directly
+in `testTwoConversationsAreFullyIsolated`.
+
+### Cross-service disclosure state lives in `ChatCoordinator`, keyed by conversation, and only updates after a successful send
+
+**Decision:** `lastUsedService[conversationID]` is set only inside the
+success branch of `runStream` (after streaming completes without being
+cancelled), not when a message is merely queued or when the model picker
+is opened.
+
+**Why:** The brief is explicit: "Never send history merely because the
+user opened the picker" and disclosure must be based on what was actually
+sent, not what's merely selected. Updating this dictionary only on
+confirmed successful delivery (not on send-attempt, not on failure)
+means `wouldShareHistoryAcrossServices` reflects genuine history-sharing
+that already happened, not a hypothetical. Verified in
+`testWouldShareHistoryAcrossServicesDetectsSwitchOnlyAfterAMessageExists`.
+
+### Retry removes and re-sends rather than replaying stored request state
+
+**Decision:** `retryLastTurn` pops the failed assistant message and the
+preceding user message off the transcript, then calls the normal `send`
+path again with that same user text — it does not keep a separate
+"last request" snapshot to replay.
+
+**Why:** Simpler and avoids a second source of truth for "what was sent
+last." Since `send` already reconstructs the outgoing message list from
+transcript content filtered by `isEligibleForContext`, replaying through
+`send` naturally picks up the current transcript state (including
+anything that might have changed) rather than blindly resending a frozen
+snapshot. The guard clauses in `retryLastTurn` are deliberately strict
+(exact last-two-messages shape) so it does nothing rather than guessing
+at an ambiguous transcript shape — see STATUS.md limitation 11 for the
+one gap this leaves in test coverage (the "does nothing" paths aren't
+each individually tested).

@@ -1,40 +1,32 @@
 import SwiftUI
 
-/// Placeholder conversation surface: a real toolbar model selector (as of
-/// Stage 2), an explanatory transcript area, and a disabled composer.
+/// Real streaming chat surface as of Stage 3: transcript, composer with
+/// Send/Stop, and a toolbar model selector.
 ///
-/// No message rendering, no streaming, and no chat network calls exist
-/// yet — those arrive in Stage 3. The toolbar button opens the real
-/// model picker and reflects the current selection's display name and
-/// service.
+/// Markdown/code-block rendering, copy actions, and persistence are
+/// later stages (5 and 4 respectively) — this stage renders plain text
+/// and keeps everything in memory via `ChatCoordinator`.
 struct ConversationDetailView: View {
     let conversation: Conversation
     var viewModel: AppViewModel
+    var coordinator: ChatCoordinator
+
     @State private var draftText = ""
+    @State private var pendingServiceSwitchModel: ModelInfo?
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(conversation.title)
-                        .font(.title2.bold())
-                    Text(conversation.preview)
-                        .foregroundStyle(.secondary)
-                    Divider()
-                    Text(
-                        "Streaming chat, model catalogs, and account connection are not " +
-                        "implemented yet. This is the Stage 0 shell only."
-                    )
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                }
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            TranscriptView(messages: coordinator.messages(for: conversation.id))
 
             Divider()
 
-            ComposerView(text: $draftText)
+            ComposerView(
+                text: $draftText,
+                isGenerating: isGeneratingHere,
+                canSend: canSend,
+                onSend: attemptSend,
+                onStop: coordinator.stopGeneration
+            )
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -45,49 +37,68 @@ struct ConversationDetailView: View {
                 }
                 .keyboardShortcut("k", modifiers: .command)
                 .help("Choose a model (⌘K)")
+                .disabled(isGeneratingHere)
             }
         }
+        .alert(
+            "Share history with \(pendingServiceSwitchModel?.service.displayName ?? "")?",
+            isPresented: Binding(
+                get: { pendingServiceSwitchModel != nil },
+                set: { if !$0 { pendingServiceSwitchModel = nil } }
+            )
+        ) {
+            Button("Cancel", role: .cancel) { pendingServiceSwitchModel = nil }
+            Button("Send") {
+                if let model = pendingServiceSwitchModel {
+                    coordinator.send(text: draftText, in: conversation.id, using: model)
+                    draftText = ""
+                }
+                pendingServiceSwitchModel = nil
+            }
+        } message: {
+            Text(
+                "This conversation's existing history was sent to a different service. " +
+                "Sending now will share that history with \(pendingServiceSwitchModel?.service.displayName ?? "this service") too."
+            )
+        }
+    }
+
+    private var isGeneratingHere: Bool {
+        coordinator.generationState.activeConversationID == conversation.id
+    }
+
+    private var canSend: Bool {
+        guard case .idle = coordinator.generationState else { return false }
+        guard viewModel.selectedModel != nil else { return false }
+        return !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var modelButtonTitle: String {
         guard let model = viewModel.selectedModel else { return "Select Model" }
         return "\(model.displayName) · \(model.service.displayName)"
     }
-}
 
-/// Bottom composer: multiline input plus Send/Stop.
-///
-/// Send is disabled in Stage 0 because there is no chat coordinator to send
-/// to yet. Shift+Return inserts a newline via the native multiline text
-/// field behavior; Return alone is reserved for Send once implemented.
-private struct ComposerView: View {
-    @Binding var text: String
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField("Message (chat not yet implemented)", text: $text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...6)
-                .padding(8)
-                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
-                .disabled(true)
-
-            Button {
-                // Intentionally no-op in Stage 0.
-            } label: {
-                Label("Send", systemImage: "arrow.up.circle.fill")
-            }
-            .labelStyle(.iconOnly)
-            .disabled(true)
-            .help("Sending arrives in Stage 3")
+    private func attemptSend() {
+        guard let model = viewModel.selectedModel else { return }
+        if coordinator.wouldShareHistoryAcrossServices(conversationID: conversation.id, nextService: model.service) {
+            pendingServiceSwitchModel = model
+            return
         }
-        .padding()
+        coordinator.send(text: draftText, in: conversation.id, using: model)
+        draftText = ""
     }
 }
 
 #Preview("Conversation Detail") {
     ConversationDetailView(
         conversation: DemoFixtures.conversations[0],
-        viewModel: AppViewModel()
+        viewModel: AppViewModel(),
+        coordinator: ChatCoordinator(credentialStore: PreviewCoordinatorStore(), clients: [:])
     )
+}
+
+private struct PreviewCoordinatorStore: CredentialStore {
+    func saveKey(_ key: String, for service: AIService) throws {}
+    func loadKey(for service: AIService) throws -> String? { nil }
+    func deleteKey(for service: AIService) throws {}
 }

@@ -2,7 +2,94 @@
 
 ## Last completed stage
 
-**Stage 2 — Catalog and unified model picker.** Complete.
+**Stage 3 — Reliable streaming chat.** Complete.
+
+## Stage 3 — what's implemented
+
+- Domain types: `ChatRole`/`OutgoingChatMessage` (minimal request-body
+  shape), `ChatUsage` (all fields optional — missing is unknown, never
+  zero), `TranscriptMessage`/`MessageStatus` (streaming/completed/
+  cancelled/failed/interrupted, matching the brief's generation-state
+  list) with `isEligibleForContext` encoding the brief's context-
+  eligibility rules (exclude failed-empty assistant messages; cancelled
+  partial output is excluded by default, not silently sent as complete).
+- `SSEParser`: incremental, byte-level Server-Sent-Events parser.
+  Verified via 12 dedicated tests to correctly handle: arbitrary
+  fragmentation across multiple `feed()` calls, a multi-byte UTF-8
+  character (é) deliberately split mid-character across two feeds,
+  LF and CRLF line endings, multiple `data:` lines joined per the SSE
+  spec, comment/keep-alive lines (`: ...`) being skipped rather than
+  passed to JSON parsing, multiple complete events in one feed, and
+  other SSE fields (`id:`, `event:`) not disrupting parsing.
+- `ChatStreamDecoder`: decodes one SSE payload into a `ChatStreamEvent`
+  (contentDelta/finished/usage/streamError/ignorable). Returns `nil` for
+  `"[DONE]"` and invalid JSON rather than crashing. Content is checked
+  before `finish_reason` so trailing content in a chunk that also
+  carries a finish reason isn't dropped. Mid-stream errors (HTTP 200
+  carrying a top-level `error` + `finish_reason: "error"`, exact shape
+  verified against
+  `https://openrouter.ai/docs/api-reference/streaming`) are surfaced as
+  `.streamError`, including when it's the first and only event.
+- `StreamingHTTPClient`/`URLSessionStreamingHTTPClient`: chunked-response
+  transport (`URLSession.bytes(for:)`), same ephemeral/no-cache/
+  cross-host-redirect-blocking policy as the Stage 1 buffered client.
+  Cancelling the consuming task cancels the underlying network task.
+- `ChatRequestBuilder`: builds the OpenAI-compatible request body
+  (`model`, `messages`, `stream: true`,
+  `stream_options.include_usage: true`) — verified as accepted by both
+  services' documented request schemas (Venice's documented example
+  request body includes `stream_options.include_usage`; OpenRouter's SDK
+  example reads `chunk.usage` off the final chunk). No provider-specific
+  fields (`venice_parameters`, OpenRouter `provider` routing) are sent
+  yet — deferred to Stage 6.
+- `ChatRequestError`: user-actionable error classification
+  (invalidCredential/insufficientCredit/rateLimited/modelUnavailable/
+  contextOverflow/unsupportedParameter/offlineOrTimeout/providerFailure/
+  malformedResponse/streamError/prematureDisconnect), with
+  `.from(httpStatus:providerMessage:)` mapping documented status codes
+  (401/402/403/404/429/502/503, plus a context-overflow heuristic on
+  400) to these cases.
+- `ChatStreamingClient`/`StandardChatStreamingClient`: shared streaming
+  implementation for both services (justified in DECISIONS.md — unlike
+  catalog/connection-check decoding, the actual OpenAI-compatible chunk
+  *shape* really is the same for plain text chat on both providers).
+  Handles: pre-stream HTTP errors (buffered JSON body, mapped via
+  `ChatRequestError.from`), mid-stream errors (thrown as
+  `.streamError`), and premature disconnect (stream ends with no
+  `finished`/`usage` event ever observed → `.prematureDisconnect`).
+- `GenerationState` (idle/connecting/streaming, single global slot per
+  the brief) and `ChatCoordinator`: owns in-memory transcripts keyed by
+  conversation ID, `send`/`stopGeneration`/`retryLastTurn`,
+  `wouldShareHistoryAcrossServices` (cross-service disclosure — only
+  true once a message actually exists in that conversation, never
+  merely from opening the picker), and per-(conversationID,
+  messageID)-scoped updates so a stale/superseded stream can never
+  mutate the wrong conversation's transcript. Retry removes the failed
+  assistant message and re-sends the same prior user turn without
+  duplicating it.
+- Real chat UI: `TranscriptView`/`MessageBubble` (plain-text, per-message
+  service/model attribution, status badges, usage display that only
+  shows fields the provider actually reported), `ComposerView`
+  (Send/Stop, disabled while generating), `ConversationDetailView`
+  wired to `ChatCoordinator` with a cross-service-disclosure alert
+  before sending when applicable. The toolbar's model-picker button
+  (real since Stage 2) is now also disabled while generating in that
+  conversation.
+- `AppDependencies` extended with both `ChatStreamingClient`s and one
+  shared, app-lifetime `ChatCoordinator` instance (not per-view, since
+  it owns the single global generation slot).
+- New test doubles: `FakeStreamingHTTPClient`, `FakeChatStreamingClient`.
+- New tests (39 total): `SSEParserTests` (12), `ChatStreamDecoderTests`
+  (10), `StandardChatStreamingClientTests` (8 — including the exact
+  documented mid-stream-error shape and a manually-fragmented-mid-event
+  byte split), `ChatCoordinatorTests` (4) + `ChatCoordinatorAdditionalTests`
+  (5) covering: happy path, no-stored-key immediate failure without
+  calling the client, a second send while generating being rejected,
+  Stop preserving partial content as `.cancelled`, failure→retry without
+  duplicating the user turn, full isolation between two conversation
+  IDs, cross-service disclosure only after a real message exists, and a
+  cancelled message's content being excluded from the next request's
+  context.
 
 ## Stage 2 — what's implemented
 
@@ -198,16 +285,13 @@ xcodebuild -project ChatterBat.xcodeproj -scheme ChatterBat \
   -destination 'platform=macOS' -derivedDataPath /tmp/ChatterBatDerivedData \
   -only-testing:ChatterBatTests test
 ```
-Result (Stage 2, current): **TEST SUCCEEDED** — 60/60 tests passed across
-11 suites: `AccountSettingsViewModelTests` (8), `AppViewModelTests` (5),
-`ConversationTests` (2), `KeychainCredentialStoreTests` (7),
-`ModelPickerViewModelTests` (7), `OpenRouterConnectionCheckerTests` (8),
-`OpenRouterModelCatalogFetcherTests` (7), `UserDefaultsModelPreferencesStoreTests`
-(5), `VeniceConnectionCheckerTests` (5), `VeniceModelCatalogFetcherTests` (6).
-Verified via `xcodebuild ... test | grep "Test Suite"` that every suite
-actually started and passed (i.e. the two suites touching real OS state —
-`KeychainCredentialStoreTests` and `UserDefaultsModelPreferencesStoreTests`
-— were not silently skipped).
+Result (Stage 3, current): **TEST SUCCEEDED** — 99/99 tests passed across
+17 suites (see Stage 3 section above for the 5 new suites; carried-forward
+suites from Stages 0–2 all still pass unchanged). Verified via
+`xcodebuild ... test | grep "Test Suite"` that every suite actually
+started and passed, and re-ran the full suite **3 times in a row** to
+check for flakiness in the timing-sensitive `ChatCoordinator` tests
+(cancellation races) — all 3 runs passed with 99/99.
 
 Full scheme test (`ChatterBatTests` + `ChatterBatUITests` together):
 Result: still **FAILS** at the `ChatterBatUITests` load step only (same
@@ -257,6 +341,19 @@ before the UI test bundle failed to load.
   unit-tested. Recommend a manual visual pass in Xcode's own Run/Preview,
   or granting Screen Recording permission to whatever process runs these
   tools.
+- Stage 3: rebuilt and launched the app again after wiring
+  `ChatCoordinator`/real chat into `ConversationDetailView`; confirmed
+  via `pgrep` it started successfully with no crash, then terminated it
+  with `kill` (SIGTERM). Confirmed again afterward that no
+  `com.chatterbat.app.apikeys` Keychain item exists. Did **not** click
+  Send interactively or exercise a live chat completion — no UI
+  automation and no real API key are available in this environment (see
+  limitations below). The full streaming pipeline (SSE parsing,
+  chunk decoding, error mapping, cancellation, cross-conversation
+  isolation, cross-service disclosure, retry) is exercised end-to-end
+  by `ChatCoordinatorTests`/`ChatCoordinatorAdditionalTests`/
+  `StandardChatStreamingClientTests` against fakes, run 3 times
+  consecutively with no flakiness — but never against a real provider.
 
 ## Known limitations
 
@@ -299,8 +396,9 @@ before the UI test bundle failed to load.
    deliberate choice (see DECISIONS.md) to avoid a hidden network call on
    every launch, but means the connected/green state does not persist
    across relaunches by itself — only the underlying key does.
-5. Persistence (SwiftData) and chat itself are still entirely
-   unimplemented — expected before Stage 3/4, not a defect.
+5. Persistence (SwiftData) is still entirely unimplemented — everything
+   in `ChatCoordinator`/`AppViewModel` is in-memory only and is lost on
+   quit. Expected before Stage 4, not a defect.
 6. **Catalog fetchers have not been exercised against the real
    Venice/OpenRouter `/models` endpoints with a live key**, for the same
    reason as limitation 3 (tests must never call live endpoints). Fixture
@@ -322,14 +420,47 @@ before the UI test bundle failed to load.
    exercised via `ModelPickerViewModelTests` against the view *model* —
    not the view itself, since no UI test/screenshot tooling is available
    here (see limitation 2/5 pattern above).
+9. **No real chat completion has ever been sent to Venice or
+   OpenRouter.** This is the most significant unverified area of Stage
+   3: `StandardChatStreamingClient` is tested against fixtures matching
+   the documented SSE/chunk shapes for both providers, and
+   `ChatRequestBuilder` sends only fields verified against each
+   provider's documented request schema, but neither has been confirmed
+   against a live response. In particular: (a) whether Venice's actual
+   streamed chunks match the exact OpenAI-compatible shape assumed here
+   when `stream_options.include_usage` is set; (b) whether OpenRouter
+   reliably includes a usage frame in every case, not just the SDK
+   example shown in its docs; (c) real latency/behavior of Stop actually
+   halting provider-side billing, which the brief says isn't guaranteed
+   anyway. **Action for a human:** connect a real key, send a short
+   message on each service, and confirm: text streams in visibly,
+   Stop actually halts new text within roughly a second, and a
+   deliberately-triggered error (e.g. an invalid model ID typed into a
+   future settings override, or simply exhausting credit) surfaces a
+   sensible message rather than a crash.
+10. Composer Return-to-send behavior is unverified interactively (see
+    `ComposerView`'s doc comment) — SwiftUI's `TextField(axis: .vertical)`
+    is known in some OS versions to treat Return as a newline rather
+    than firing `onSubmit`. ⌘Return is wired as a guaranteed fallback,
+    but plain Return should be manually confirmed on the target macOS
+    version. Input-method (IME) marked-text behavior during composition
+    was likewise not tested.
+11. `retryLastTurn` only handles the single most common case (last
+    message is a failed assistant reply preceded by the matching user
+    turn). It intentionally does nothing (silently) if the transcript
+    shape doesn't match that exact pattern, rather than guessing —
+    covered by the guard clauses in `ChatCoordinator.retryLastTurn`, but
+    there is no dedicated test for the "does nothing when the shape is
+    unexpected" case specifically; only the standard success path is
+    tested.
 
 ## Next small task
 
-Begin Stage 3: reliable streaming chat — request assembly, a robust SSE
-parser (fragmented chunks, split UTF-8, CRLF/LF, comments/keep-alives,
-usage-only frames, HTTP-200-carried errors), a chat coordinator/state
-machine, Stop/Retry, per-message service/model attribution, and
-cross-service history disclosure when switching services mid-conversation.
-This is the first stage that actually sends `POST /chat/completions` to
-either provider. See `docs/DEVELOPMENT_PLAN.md` and the original brief §7
-(Streaming, Errors and retries) and §11 (Stage 3).
+Begin Stage 4: durable conversation history — a SwiftData schema and
+repository, wiring `AppViewModel`/`ChatCoordinator` to persist
+conversations/messages/favorites instead of holding them only in memory,
+rename/delete/search against real storage, generation checkpoints so a
+relaunch marks any still-`.streaming` message `.interrupted` (not lost or
+silently resumed), and persistence tests using an isolated/in-memory
+SwiftData store. See `docs/DEVELOPMENT_PLAN.md` and the original brief §8
+(Persistence and security) and §11 (Stage 4).

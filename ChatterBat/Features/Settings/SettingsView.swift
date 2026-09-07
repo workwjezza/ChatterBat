@@ -51,14 +51,23 @@ private struct GeneralSettingsView: View {
 #Preview {
     // Uses in-memory fakes, not `.live()` — previews must never touch the
     // real Keychain or network.
+    let store = PreviewOnlyCredentialStore()
+    let veniceChat = PreviewOnlyChatClient(service: .venice)
+    let openRouterChat = PreviewOnlyChatClient(service: .openRouter)
     SettingsView(
         dependencies: AppDependencies(
-            credentialStore: PreviewOnlyCredentialStore(),
+            credentialStore: store,
             veniceChecker: PreviewOnlyConnectionChecker(service: .venice),
             openRouterChecker: PreviewOnlyConnectionChecker(service: .openRouter),
             veniceCatalogFetcher: PreviewOnlyCatalogFetcher(service: .venice),
             openRouterCatalogFetcher: PreviewOnlyCatalogFetcher(service: .openRouter),
-            modelPreferencesStore: PreviewOnlyPreferencesStore()
+            modelPreferencesStore: PreviewOnlyPreferencesStore(),
+            veniceChatClient: veniceChat,
+            openRouterChatClient: openRouterChat,
+            chatCoordinator: ChatCoordinator(
+                credentialStore: store,
+                clients: [.venice: veniceChat, .openRouter: openRouterChat]
+            )
         )
     )
 }
@@ -88,4 +97,15 @@ private final class PreviewOnlyPreferencesStore: ModelPreferencesStore {
     func setFavorite(_ identity: ModelIdentity, isFavorite: Bool) {}
     func recentIdentities() -> [ModelIdentity] { [] }
     func recordUsed(_ identity: ModelIdentity) {}
+}
+
+private struct PreviewOnlyChatClient: ChatStreamingClient {
+    let service: AIService
+    func streamChatCompletion(
+        apiKey: String,
+        modelID: String,
+        messages: [OutgoingChatMessage]
+    ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
 }

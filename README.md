@@ -9,11 +9,13 @@ with an emphasis on fast, honest model switching.
 
 ## Current status
 
-Stages 0–2 are complete: a buildable native shell, Keychain-backed
+Stages 0–3 are complete: a buildable native shell, Keychain-backed
 Venice/OpenRouter account connection with non-billable key verification
-(Settings → Accounts), and a real unified model picker (⌘K) with live
-catalogs, search, service filtering, favorites, and recents. There is no
-chat yet and no persistence beyond favorites/recents — see
+(Settings → Accounts), a real unified model picker (⌘K) with live
+catalogs, and real streaming chat (Send/Stop/Retry, cross-service history
+disclosure, per-message attribution). Chat has not yet been exercised
+against a live provider key, and there is no persistence beyond
+favorites/recents — everything else is in-memory only until Stage 4. See
 `docs/STATUS.md` for exactly what exists and what's next.
 
 ## Requirements
@@ -38,9 +40,11 @@ ChatterBat/
   Persistence/     (empty until Stage 4 — SwiftData repository)
   Services/
     Keychain/       CredentialStore protocol + Keychain implementation
-    Networking/     HTTPClient protocol + URLSession implementation
+    Networking/     HTTPClient/StreamingHTTPClient + URLSession implementations
     Providers/      Per-service connection verification + model catalog fetchers
     Preferences/    Favorites/recents (UserDefaults-backed, non-secret)
+    Streaming/      SSE parser + chat stream chunk decoder (provider-agnostic)
+    Chat/           Chat request builder + shared streaming client + error mapping
   Design/          (empty until shared design tokens are needed)
   Resources/       Entitlements, asset catalog
 ChatterBatTests/    XCTest unit tests (+ Fakes/ for in-memory test doubles)

@@ -112,17 +112,35 @@ chosen over `Decodable` here.
 Known gap carried into Stage 3: catalog fetchers have only been tested
 against fixtures, not a live key — see STATUS.md limitation 6.
 
-## Next stage: Stage 3 — Reliable streaming chat
+## Stage 3 summary (complete)
 
-Implement request assembly for `POST /chat/completions` on both
-services, a robust SSE parser (fragmented chunks, split UTF-8, LF/CRLF,
-comments/keep-alives, `[DONE]`, usage-only frames, HTTP-200-carried
-errors, premature disconnects, cancellation), a chat coordinator/state
-machine (idle/connecting/streaming/completed/cancelled/failed/
-interrupted), Stop and explicit Retry, per-message service/model
-attribution, and cross-service history disclosure when the user switches
-services mid-conversation. This is the first stage that sends real,
-potentially billable requests — automated tests must still use injected
-transport/fixtures only, never live keys. See the original brief §6
-(Concurrency), §7 (Streaming, Errors and retries), and §11 Stage 3 for
-acceptance criteria.
+`SSEParser` (byte-level, fragmentation/UTF-8-split/CRLF/comments-safe),
+`ChatStreamDecoder` (OpenAI-compatible chunk → contentDelta/finished/
+usage/streamError/ignorable, mid-stream-HTTP-200-error-aware),
+`StreamingHTTPClient`/`URLSessionStreamingHTTPClient` (chunked transport,
+redirect-blocked, cancellable), `ChatRequestBuilder`/`ChatRequestError`,
+one shared `StandardChatStreamingClient` for both services (justified in
+DECISIONS.md — the chunk shape genuinely is shared, unlike catalog
+decoding), and `ChatCoordinator` (in-memory transcripts, single global
+generation slot, Stop/Retry, cross-conversation isolation, cross-service
+disclosure gated on actual sent history). Real chat UI
+(`TranscriptView`/`ComposerView`/`ConversationDetailView`) replaces the
+Stage 0 disabled placeholder composer. 99/99 unit tests pass (39 new),
+re-run 3× to check for timing flakiness in cancellation tests. See
+`docs/STATUS.md` for full detail and `docs/DECISIONS.md` for the
+shared-vs-separate-implementation reasoning.
+
+Known gap carried into Stage 4: no real chat completion has been sent to
+either live provider yet — see STATUS.md limitation 9 for the recommended
+manual check.
+
+## Next stage: Stage 4 — Durable conversation history
+
+Implement a SwiftData schema and repository; wire `AppViewModel`'s
+conversation list and `ChatCoordinator`'s transcripts to real persistence
+instead of in-memory-only state; rename/delete/search against storage;
+generation checkpoints so a relaunch marks any message still `.streaming`
+as `.interrupted` rather than silently losing or resuming it; persistence
+tests using an isolated/in-memory SwiftData container. See the original
+brief §8 (Persistence and security) and §11 Stage 4 for acceptance
+criteria.
