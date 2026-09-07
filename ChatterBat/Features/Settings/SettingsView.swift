@@ -55,7 +55,10 @@ private struct GeneralSettingsView: View {
         dependencies: AppDependencies(
             credentialStore: PreviewOnlyCredentialStore(),
             veniceChecker: PreviewOnlyConnectionChecker(service: .venice),
-            openRouterChecker: PreviewOnlyConnectionChecker(service: .openRouter)
+            openRouterChecker: PreviewOnlyConnectionChecker(service: .openRouter),
+            veniceCatalogFetcher: PreviewOnlyCatalogFetcher(service: .venice),
+            openRouterCatalogFetcher: PreviewOnlyCatalogFetcher(service: .openRouter),
+            modelPreferencesStore: PreviewOnlyPreferencesStore()
         )
     )
 }
@@ -73,4 +76,16 @@ private struct PreviewOnlyConnectionChecker: ConnectionChecking {
     func checkConnection(apiKey: String) async -> ConnectionCheckOutcome {
         .valid(summary: "Connected (preview)")
     }
+}
+
+private struct PreviewOnlyCatalogFetcher: ModelCatalogFetching {
+    let service: AIService
+    func fetchModels(apiKey: String) async -> ModelCatalogFetchOutcome { .success([]) }
+}
+
+private final class PreviewOnlyPreferencesStore: ModelPreferencesStore {
+    func favoriteIdentities() -> Set<ModelIdentity> { [] }
+    func setFavorite(_ identity: ModelIdentity, isFavorite: Bool) {}
+    func recentIdentities() -> [ModelIdentity] { [] }
+    func recordUsed(_ identity: ModelIdentity) {}
 }

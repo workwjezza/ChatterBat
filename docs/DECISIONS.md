@@ -153,3 +153,88 @@ brief's error-handling rules treat as meaningfully different states.
 dependency-injection container. A single small factory keeps production
 wiring in one obvious place without adding an abstraction layer that isn't
 needed yet — there are only two dependencies to assemble so far.
+
+## Stage 2
+
+### Used `JSONSerialization` + lenient dictionary lookups instead of `Decodable` for catalog entries
+
+**Decision:** `ModelCatalogDecoding` parses the top-level `{"data": [...]}"`
+envelope once, then each fetcher pulls only the specific fields it needs
+out of a `[String: Any]` per entry, skipping (not failing) any entry
+missing `id`.
+
+**Why:** The brief requires that "one malformed entry" never discard the
+rest of the catalog. `Decodable` on `[ModelDTO]` fails the *entire* array
+decode if any single element doesn't match the expected shape (missing
+required field, wrong type, etc.) — there is no built-in "skip bad
+elements" mode for a plain array decode. Decoding entry-by-entry into
+loosely-typed dictionaries and defensively reading only the fields
+ChatterBat displays makes partial-failure-tolerant decoding
+straightforward, at the cost of losing `Decodable`'s compile-time
+schema-shape checking. This is called out explicitly in
+`ModelCatalogDecoding`'s doc comment as a deliberate, narrow exception.
+
+### Normalized all catalog pricing to USD per 1,000,000 tokens at the fetcher boundary
+
+**Decision:** `ModelPricing` always stores USD/1M-tokens `Decimal?`
+values. `OpenRouterModelCatalogFetcher` multiplies OpenRouter's
+per-single-token string prices by 1,000,000; `VeniceModelCatalogFetcher`
+passes Venice's already-per-1M-token values through unchanged.
+
+**Why:** Verified against current docs during this stage that the two
+providers use genuinely different units:
+`https://docs.venice.ai/overview/pricing` ("Prices per 1M tokens unless
+noted") vs. OpenRouter's `pricing.prompt`/`completion` being a string in
+USD per single token
+(`https://openrouter.ai/docs/api-reference/models/get-models`,
+`"0.00003"`-style example). Converting once at the fetcher boundary means
+the rest of the app (picker UI, future cost estimation) only ever deals
+with one normalized unit and never has to remember which provider needed
+which conversion.
+
+### `ModelInfo`/`ModelPricing`/`CapabilitySupport` conform to `Hashable`, not just `Equatable`
+
+**Decision:** Widened these from `Equatable` to `Hashable`.
+
+**Why:** SwiftUI's `ForEach`/`List` over `[ModelInfo]` and test
+assertions comparing arrays both benefit from `Hashable` (e.g. for
+potential `Set` de-duplication later), and `Decimal`/`String`/nested enum
+members are all already `Hashable`, so there's no cost to widening it now
+rather than needing a second pass later.
+
+### Favorites/recents go in `UserDefaults`, not Keychain or SwiftData yet
+
+**Decision:** `ModelPreferencesStore`'s only production implementation is
+`UserDefaultsModelPreferencesStore`.
+
+**Why:** The brief explicitly distinguishes API keys (Keychain-only) from
+"non-secret settings" like favorites, and separately says persistence
+generally moves to SwiftData starting Stage 4. Favorites/recents are
+non-secret and don't need SwiftData's relational structure yet (they're
+just a small set/list of identifier strings), so `UserDefaults` is the
+simplest correct choice for this stage, with a protocol boundary already
+in place so swapping the backing store later doesn't touch call sites.
+
+### `refresh(_:)` keeps the last-successful catalog visible through a failure
+
+**Decision:** `CatalogLoadState.failed` carries `cachedModels`/
+`cachedFetchedAt` from before the failing attempt, and `ModelPickerViewModel.refresh`
+passes the previous `displayableModels` through into both `.loading` and
+a subsequent `.failed` state.
+
+**Why:** The brief requires "cache catalogs and show cache age/offline
+state" and implies a refresh failure shouldn't regress the UI to empty
+when a perfectly good previous catalog is already in memory. This is
+tested directly in `testFailedRefreshKeepsPreviouslyLoadedModelsVisible`.
+
+### The model picker performs zero network calls for a service with no stored key
+
+**Decision:** `ModelPickerViewModel.loadAllConfiguredCatalogs()` checks
+`credentialStore.loadKey(for:)` first and sets `.notConfigured` without
+ever invoking the corresponding fetcher when no key is present.
+
+**Why:** Consistent with the Stage 1 decision not to make hidden network
+calls without explicit intent — an unconnected service shouldn't generate
+background traffic just because the user opened the picker. Verified in
+`testServiceWithNoStoredKeyIsMarkedNotConfiguredWithoutFetching` via the
+fetcher's `fetchCount`.

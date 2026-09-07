@@ -9,11 +9,12 @@ with an emphasis on fast, honest model switching.
 
 ## Current status
 
-Stages 0–1 are complete: a buildable native shell, plus Keychain-backed
+Stages 0–2 are complete: a buildable native shell, Keychain-backed
 Venice/OpenRouter account connection with non-billable key verification
-(Settings → Accounts). There is no model catalog, no chat, and no
-persistence yet — see `docs/STATUS.md` for exactly what exists and what's
-next.
+(Settings → Accounts), and a real unified model picker (⌘K) with live
+catalogs, search, service filtering, favorites, and recents. There is no
+chat yet and no persistence beyond favorites/recents — see
+`docs/STATUS.md` for exactly what exists and what's next.
 
 ## Requirements
 
@@ -38,7 +39,8 @@ ChatterBat/
   Services/
     Keychain/       CredentialStore protocol + Keychain implementation
     Networking/     HTTPClient protocol + URLSession implementation
-    Providers/      Per-service connection verification (Venice, OpenRouter)
+    Providers/      Per-service connection verification + model catalog fetchers
+    Preferences/    Favorites/recents (UserDefaults-backed, non-secret)
   Design/          (empty until shared design tokens are needed)
   Resources/       Entitlements, asset catalog
 ChatterBatTests/    XCTest unit tests (+ Fakes/ for in-memory test doubles)

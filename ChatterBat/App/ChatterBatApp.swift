@@ -12,7 +12,7 @@ struct ChatterBatApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            RootView(dependencies: dependencies)
         }
         .windowToolbarStyle(.unified)
 

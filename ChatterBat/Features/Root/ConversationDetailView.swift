@@ -1,12 +1,12 @@
 import SwiftUI
 
-/// Placeholder conversation surface: toolbar model selector, an explanatory
-/// transcript area, and a disabled composer.
+/// Placeholder conversation surface: a real toolbar model selector (as of
+/// Stage 2), an explanatory transcript area, and a disabled composer.
 ///
-/// No message rendering, no streaming, and no network calls exist yet.
-/// This view exists so Stage 0 can demonstrate the intended layout
-/// (toolbar model switcher, transcript, composer) before Stage 3 wires in
-/// real chat behavior.
+/// No message rendering, no streaming, and no chat network calls exist
+/// yet — those arrive in Stage 3. The toolbar button opens the real
+/// model picker and reflects the current selection's display name and
+/// service.
 struct ConversationDetailView: View {
     let conversation: Conversation
     var viewModel: AppViewModel
@@ -41,12 +41,17 @@ struct ConversationDetailView: View {
                 Button {
                     viewModel.isModelPickerPresented = true
                 } label: {
-                    Label("Select Model", systemImage: "cpu")
+                    Label(modelButtonTitle, systemImage: "cpu")
                 }
                 .keyboardShortcut("k", modifiers: .command)
-                .help("Choose a model (⌘K) — placeholder in Stage 0")
+                .help("Choose a model (⌘K)")
             }
         }
+    }
+
+    private var modelButtonTitle: String {
+        guard let model = viewModel.selectedModel else { return "Select Model" }
+        return "\(model.displayName) · \(model.service.displayName)"
     }
 }
 

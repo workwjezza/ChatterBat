@@ -17,6 +17,13 @@ final class AppViewModel {
     var isModelPickerPresented = false
     var searchText = ""
 
+    /// The model that would be used for the *next* message sent. Not yet
+    /// wired to any conversation/message persistence (that's Stage 3/4) —
+    /// Stage 2 only needs this to exist so the picker has something real
+    /// to set and the toolbar has something real to display. Per the
+    /// brief, selecting a model here must never itself send a request.
+    var selectedModel: ModelInfo?
+
     init(conversations: [Conversation] = DemoFixtures.conversations) {
         self.conversations = conversations
         self.selectedConversationID = conversations.first?.id

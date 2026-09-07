@@ -92,15 +92,37 @@ Known gap carried into Stage 2: connection verification has only been
 tested against fixtures matching documented response shapes, not a live
 key — see STATUS.md limitation 3 for the recommended manual check.
 
-## Next stage: Stage 2 — Catalog and unified model picker
+## Stage 2 summary (complete)
 
-Implement both model-catalog integrations (`GET /models` on each
-service), normalized identity/capabilities/pricing metadata, caching with
-visible cache age/offline state, and the real searchable model picker
-(replacing `ModelPickerPlaceholderView`) with favorites, recents, and
-service filters. This stage can reuse `HTTPClient`/`URLSessionHTTPClient`
-and the per-service credential access built in Stage 1, but needs its own
-per-service catalog DTOs (see Stage 1 decision on not sharing payload
-types across services). See the original brief §7 for catalog
-requirements and capability-model rules, and §11 Stage 2 for acceptance
-criteria.
+`ModelIdentity`/`CapabilitySupport`/`ModelPricing`/`ModelInfo`/
+`CatalogLoadState` domain types; `ModelCatalogFetching` with
+`VeniceModelCatalogFetcher` (`GET /models?type=text`) and
+`OpenRouterModelCatalogFetcher` (`GET /models`), both using lenient
+per-entry `JSONSerialization` decoding so one malformed entry doesn't
+discard the catalog; pricing normalized to USD/1M-tokens at the fetcher
+boundary (Venice already reports that unit, OpenRouter reports per-token
+strings that get multiplied by 1,000,000); `ModelPreferencesStore`/
+`UserDefaultsModelPreferencesStore` for favorites/recents;
+`ModelPickerViewModel` + real `ModelPickerView`/`ModelRow` replacing
+`ModelPickerPlaceholderView`. 60/60 unit tests pass, including one built
+directly from Venice's documented example response. See `docs/STATUS.md`
+for full detail and `docs/DECISIONS.md` for why `JSONSerialization` was
+chosen over `Decodable` here.
+
+Known gap carried into Stage 3: catalog fetchers have only been tested
+against fixtures, not a live key — see STATUS.md limitation 6.
+
+## Next stage: Stage 3 — Reliable streaming chat
+
+Implement request assembly for `POST /chat/completions` on both
+services, a robust SSE parser (fragmented chunks, split UTF-8, LF/CRLF,
+comments/keep-alives, `[DONE]`, usage-only frames, HTTP-200-carried
+errors, premature disconnects, cancellation), a chat coordinator/state
+machine (idle/connecting/streaming/completed/cancelled/failed/
+interrupted), Stop and explicit Retry, per-message service/model
+attribution, and cross-service history disclosure when the user switches
+services mid-conversation. This is the first stage that sends real,
+potentially billable requests — automated tests must still use injected
+transport/fixtures only, never live keys. See the original brief §6
+(Concurrency), §7 (Streaming, Errors and retries), and §11 Stage 3 for
+acceptance criteria.

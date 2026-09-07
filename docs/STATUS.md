@@ -2,7 +2,74 @@
 
 ## Last completed stage
 
-**Stage 1 — Secure account connection.** Complete.
+**Stage 2 — Catalog and unified model picker.** Complete.
+
+## Stage 2 — what's implemented
+
+- Domain types: `ModelIdentity` (service + modelID, the only true model
+  identity per the brief), `CapabilitySupport` (supported/unsupported/
+  unknown — a missing provider field always maps to `.unknown`, never
+  `.unsupported`), `ModelPricing` (USD per 1,000,000 tokens, `nil` means
+  unknown — never displayed as free/zero), `ModelInfo` (the normalized,
+  picker-facing model description), `CatalogLoadState` (per-service
+  loading/loaded/failed state that keeps previously-cached models visible
+  through a failed refresh).
+- `ModelCatalogFetching` protocol + one fetcher per service, both using
+  `JSONSerialization`-based lenient decoding (`ModelCatalogDecoding`) so
+  one malformed catalog entry is skipped rather than discarding the whole
+  list:
+  - `VeniceModelCatalogFetcher` → `GET /models?type=text` (the documented
+    filter for chat/text models —
+    `https://docs.venice.ai/api-reference/endpoint/models/list`). Venice
+    already reports pricing in USD per 1,000,000 tokens
+    (`https://docs.venice.ai/overview/pricing`, "Prices per 1M tokens
+    unless noted"), so no unit conversion is applied.
+  - `OpenRouterModelCatalogFetcher` → `GET /models` (defaults to
+    text-output models per
+    `https://openrouter.ai/docs/guides/overview/models`). OpenRouter
+    reports `pricing.prompt`/`completion` as a numeric *string* in USD
+    per single token (e.g. `"0.00003"`); this fetcher multiplies by
+    1,000,000 to normalize into `ModelPricing`'s convention.
+  - Both map 401/403 → `.invalidCredential`, decode failure/unexpected
+    status → `.unrecognizedResponse`, transport errors →
+    `.transportFailure`. Test coverage includes a fixture built directly
+    from Venice's own documented example object, so drift from that
+    exact shape would be caught.
+- `ModelPreferencesStore` protocol + `UserDefaultsModelPreferencesStore`:
+  favorites (`Set<ModelIdentity>`) and recents (capped at 10, most-recent
+  first), stored as plain non-secret settings — never in Keychain, and
+  never conflated with API keys.
+- `ModelPickerViewModel`: per-service `CatalogLoadState`, `loadAllConfiguredCatalogs()`
+  (skips any service with no stored key — zero network calls for
+  unconnected services), `refresh(_:)` (keeps last-successful models
+  visible through a failure), search/service-filter/favorites-only
+  filtering via `filteredModels`, `recentModels` resolved against
+  currently-known catalog entries, `toggleFavorite`, `recordSelection`.
+- Real `ModelPickerView` + `ModelRow` + `ModelPickerServiceFilter`,
+  replacing `ModelPickerPlaceholderView` (deleted this stage): search
+  field, All/Venice/OpenRouter segmented filter, Favorites-only toggle,
+  Recent/per-service sections, service badge, secondary model-ID line,
+  context length, price (or "Price unknown" — never "Free"), Tools/
+  Reasoning/Vision badges shown only when actually `.supported`, Venice
+  privacy label when present, and a star toggle. Selecting a row only
+  calls `onSelect` and dismisses — it does not send any chat request.
+- `AppViewModel.selectedModel` now holds the chosen `ModelInfo`;
+  `ConversationDetailView`'s toolbar button shows "Select Model" until a
+  choice is made, then shows "`<name>` · `<service>`".
+- `AppDependencies` extended with both catalog fetchers and the
+  preferences store; `makeModelPickerViewModel()` wires the real
+  implementations. `RootView`/`SettingsView` previews updated with
+  additional preview-only fakes (never touching real Keychain/UserDefaults
+  /network).
+- New test doubles: `FakeModelCatalogFetcher`, `InMemoryModelPreferencesStore`.
+- New tests: `VeniceModelCatalogFetcherTests` (6, including the
+  documented-example-shape regression test),
+  `OpenRouterModelCatalogFetcherTests` (7), `ModelPickerViewModelTests`
+  (7 — covering not-configured/no-fetch, successful load, failed-refresh
+  cache retention, service+search filtering, same-name-different-service
+  non-merging, favorites, recents), `UserDefaultsModelPreferencesStoreTests`
+  (5 — using an isolated, randomly-named `UserDefaults` suite removed in
+  `tearDown`, the same isolation pattern as the Stage 1 Keychain tests).
 
 ## Stage 1 — what's implemented
 
@@ -131,13 +198,16 @@ xcodebuild -project ChatterBat.xcodeproj -scheme ChatterBat \
   -destination 'platform=macOS' -derivedDataPath /tmp/ChatterBatDerivedData \
   -only-testing:ChatterBatTests test
 ```
-Result (Stage 1, current): **TEST SUCCEEDED** — 35/35 tests passed across
-6 suites: `AccountSettingsViewModelTests` (8), `AppViewModelTests` (5),
+Result (Stage 2, current): **TEST SUCCEEDED** — 60/60 tests passed across
+11 suites: `AccountSettingsViewModelTests` (8), `AppViewModelTests` (5),
 `ConversationTests` (2), `KeychainCredentialStoreTests` (7),
-`OpenRouterConnectionCheckerTests` (8), `VeniceConnectionCheckerTests` (5).
+`ModelPickerViewModelTests` (7), `OpenRouterConnectionCheckerTests` (8),
+`OpenRouterModelCatalogFetcherTests` (7), `UserDefaultsModelPreferencesStoreTests`
+(5), `VeniceConnectionCheckerTests` (5), `VeniceModelCatalogFetcherTests` (6).
 Verified via `xcodebuild ... test | grep "Test Suite"` that every suite
-actually started and passed (i.e. `KeychainCredentialStoreTests` — the one
-suite touching the real Keychain — was not silently skipped).
+actually started and passed (i.e. the two suites touching real OS state —
+`KeychainCredentialStoreTests` and `UserDefaultsModelPreferencesStoreTests`
+— were not silently skipped).
 
 Full scheme test (`ChatterBatTests` + `ChatterBatUITests` together):
 Result: still **FAILS** at the `ChatterBatUITests` load step only (same
@@ -164,14 +234,29 @@ before the UI test bundle failed to load.
   through the UI in this session), and a scan for any
   `com.chatterbat.tests.*` namespace found zero leftovers, confirming
   `KeychainCredentialStoreTests`' per-test cleanup worked.
+- Stage 2: rebuilt and launched the app again after wiring the real
+  model picker into `RootView`/`ConversationDetailView`; confirmed via
+  `pgrep` it started with no crash, then terminated it (`kill`, since an
+  AppleEvent `quit` timed out this run — see limitation 6). Did not click
+  ⌘K interactively for the same reason as Stage 1 (no UI automation
+  available here), so the picker's actual on-screen behavior (search,
+  segmented filter, favorites star, sheet sizing) is implemented and
+  unit-tested but not eyeballed.
+- Confirmed no stray state from this stage's tests either: no
+  `com.chatterbat.app.apikeys` Keychain item, and `defaults read
+  com.chatterbat.app.favoriteModelIdentities` (the real-app UserDefaults
+  key) reports the domain doesn't exist — confirming
+  `UserDefaultsModelPreferencesStoreTests`' isolated per-test suite name
+  never touched real app preferences.
 - Did **not** get a visual screenshot: `screencapture` failed with
   "could not create image from display" in this non-interactive shell
   environment (no Screen Recording permission granted to the invoking
   process). Layout correctness (split view, sidebar list, composer,
-  toolbar button placement, new Accounts tab) has **not** been visually
-  confirmed — only structurally implemented and unit-tested. Recommend a
-  manual visual pass in Xcode's own Run/Preview, or granting Screen
-  Recording permission to whatever process runs these tools.
+  toolbar button placement, Accounts tab, model picker sheet) has **not**
+  been visually confirmed — only structurally implemented and
+  unit-tested. Recommend a manual visual pass in Xcode's own Run/Preview,
+  or granting Screen Recording permission to whatever process runs these
+  tools.
 
 ## Known limitations
 
@@ -214,12 +299,37 @@ before the UI test bundle failed to load.
    deliberate choice (see DECISIONS.md) to avoid a hidden network call on
    every launch, but means the connected/green state does not persist
    across relaunches by itself — only the underlying key does.
-5. Persistence (SwiftData), catalogs, and chat itself are still entirely
-   unimplemented — expected for Stage 1, not a defect.
+5. Persistence (SwiftData) and chat itself are still entirely
+   unimplemented — expected before Stage 3/4, not a defect.
+6. **Catalog fetchers have not been exercised against the real
+   Venice/OpenRouter `/models` endpoints with a live key**, for the same
+   reason as limitation 3 (tests must never call live endpoints). Fixture
+   coverage includes a test built directly from Venice's own published
+   example object, which reduces but does not eliminate the risk of
+   drift. **Action for a human:** open the model picker (⌘K) with a real
+   key connected in Settings → Accounts and confirm models load with
+   sensible names/pricing/context values.
+7. One `osascript ... quit` call during manual verification timed out
+   with an AppleEvent error (-1712) rather than quitting the app; the
+   process was instead stopped with a plain `kill` (SIGTERM). This looks
+   like an environment/AppleEvent quirk (the app may have still been
+   finishing SwiftUI scene setup) rather than an app hang, but it was not
+   root-caused further since it did not block verification. Worth
+   rechecking if it recurs in Stage 3+ manual passes.
+8. `ModelPickerView`'s empty/loading/error states were written to cover
+   the documented state combinations (`.notConfigured` for all,
+   `.loading` for any, otherwise show the first error) but have only been
+   exercised via `ModelPickerViewModelTests` against the view *model* —
+   not the view itself, since no UI test/screenshot tooling is available
+   here (see limitation 2/5 pattern above).
 
 ## Next small task
 
-Begin Stage 2: Venice/OpenRouter model catalog integration and the
-unified searchable model picker (replacing `ModelPickerPlaceholderView`),
-built on top of the now-real credential/connection layer from Stage 1.
-See `docs/DEVELOPMENT_PLAN.md` and the original brief §7 and §11 (Stage 2).
+Begin Stage 3: reliable streaming chat — request assembly, a robust SSE
+parser (fragmented chunks, split UTF-8, CRLF/LF, comments/keep-alives,
+usage-only frames, HTTP-200-carried errors), a chat coordinator/state
+machine, Stop/Retry, per-message service/model attribution, and
+cross-service history disclosure when switching services mid-conversation.
+This is the first stage that actually sends `POST /chat/completions` to
+either provider. See `docs/DEVELOPMENT_PLAN.md` and the original brief §7
+(Streaming, Errors and retries) and §11 (Stage 3).
