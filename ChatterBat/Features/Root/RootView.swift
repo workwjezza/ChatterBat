@@ -10,6 +10,8 @@ import SwiftUI
 struct RootView: View {
     let dependencies: AppDependencies
     @State private var viewModel: AppViewModel
+    @State private var isOnboardingPresented: Bool
+    @Environment(\.openSettings) private var openSettings
 
     init(dependencies: AppDependencies) {
         self.dependencies = dependencies
@@ -22,6 +24,7 @@ struct RootView: View {
         let viewModel = AppViewModel()
         viewModel.attachRepository(dependencies.conversationRepository, initialConversations: dependencies.initialConversations)
         _viewModel = State(initialValue: viewModel)
+        _isOnboardingPresented = State(initialValue: !dependencies.onboardingStateStore.hasCompletedOnboarding())
     }
 
     var body: some View {
@@ -47,6 +50,15 @@ struct RootView: View {
                 viewModel.selectedModel = model
             }
         }
+        .sheet(isPresented: $isOnboardingPresented) {
+            OnboardingView(
+                onOpenSettings: { openSettings() },
+                onDismiss: {
+                    dependencies.onboardingStateStore.markOnboardingCompleted()
+                    isOnboardingPresented = false
+                }
+            )
+        }
         .navigationTitle(viewModel.selectedConversation?.title ?? "ChatterBat")
     }
 }
@@ -71,7 +83,8 @@ struct RootView: View {
                 ]
             ),
             conversationRepository: PreviewOnlyRepository(),
-            initialConversations: DemoFixtures.conversations
+            initialConversations: DemoFixtures.conversations,
+            onboardingStateStore: PreviewOnlyOnboardingStore()
         )
     )
 }
@@ -124,4 +137,9 @@ private final class PreviewOnlyRepository: ConversationRepository {
     func updateMessage(_ message: TranscriptMessage, inConversation conversationID: UUID) throws {}
     func deleteMessage(_ messageID: UUID, fromConversation conversationID: UUID) throws {}
     func interruptAllStreamingMessages() throws {}
+}
+
+private final class PreviewOnlyOnboardingStore: OnboardingStateStore {
+    func hasCompletedOnboarding() -> Bool { false }
+    func markOnboardingCompleted() {}
 }

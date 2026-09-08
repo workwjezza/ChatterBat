@@ -2,7 +2,59 @@
 
 ## Last completed stage
 
-**Stage 4 — Durable conversation history.** Complete.
+**Stage 5 — Native polish and MVP release gate.** Complete. This
+finishes the chat-first MVP (Stages 0–5).
+
+## Stage 5 — what's implemented
+
+- `MessageContentBlock`/`MessageContentParser`: splits raw message
+  content into plain-text and fenced-code-block segments by scanning
+  for ` ``` ` fence lines. Deliberately supports only this one
+  block-level construct, per the brief ("Keep the initial supported
+  subset deliberate and tested") — no headings, lists, block quotes, or
+  tables. Handles an unterminated fence (a still-streaming message
+  whose content ends mid-code-block) by treating the remainder as code
+  rather than losing it or crashing. 11 dedicated tests, including the
+  unterminated-fence case and an empty code block (`` ``` `` immediately
+  followed by `` ``` ``, which required a real parser fix — see below).
+- `MessageContentView`: renders parsed blocks — plain text via native
+  `Text(markdown:)` with `.inlineOnlyPreservingWhitespace` (bold/
+  italic/inline-code/links only, never block Markdown), code blocks via
+  `CodeBlockView`.
+- `CodeBlockView`: monospaced, horizontally scrollable (so long lines
+  stay readable instead of wrapping awkwardly or being truncated), with
+  a per-block Copy button (`NSPasteboard`) and an optional language
+  label.
+- `MessageBubble` (replacing the old inline bubble in `TranscriptView`):
+  adds a per-message Copy Response button and a combined, readable
+  VoiceOver `accessibilityLabel` (speaker + content + terminal-status
+  note for cancelled/failed messages).
+- `AutoScrollPolicy`: pure, unit-tested decision object (4 tests) for
+  "should new content auto-scroll the transcript to the bottom" vs. "the
+  user scrolled up, so stop following until they return to the bottom
+  or switch conversations." Wired into `TranscriptView` via a
+  `ScrollViewReader` + a `GeometryReader`-based bottom-anchor offset
+  preference — the *decision logic* is tested; the actual on-screen
+  scroll behavior has not been visually confirmed (no display in this
+  environment).
+- `OnboardingView` + `OnboardingStateStore`/`UserDefaultsOnboardingStateStore`:
+  a single first-run welcome sheet (not a multi-step wizard) explaining
+  bring-your-own-key billing and pointing at Settings → Accounts;
+  dismissal is persisted (non-secret, `UserDefaults`) so it only shows
+  once. 2 dedicated tests using an isolated `UserDefaults` suite.
+- `SidebarView` now distinguishes a genuinely empty conversation list
+  ("No Conversations Yet — Start a new chat with ⌘N") from a search
+  with no matches (`ContentUnavailableView.search`) — previously both
+  showed the same search-style empty state.
+- Accessibility labels/hints added to: the model-picker row and
+  favorite-star button (with an honestly-documented caveat about
+  nested-button keyboard focus — see `ModelRow`'s doc comment), the
+  composer's message field and Send/Stop buttons, the conversation
+  toolbar's model button, the sidebar's New Chat button and conversation
+  rows, and the Settings API key field.
+- `ComposerView` placeholder text now reflects *why* sending isn't
+  possible yet ("Select a model to start chatting" vs. plain
+  "Message"), via a new `hasSelectedModel` parameter.
 
 ## Stage 4 — what's implemented
 
@@ -238,6 +290,25 @@ found the same way (minimal repro tests added and removed from
   Cleared the on-disk store (`~/Library/Containers/com.chatterbat.app/
   Data/Library/Application Support/default.store*`) before finishing
   this stage so the next manual run starts from a clean slate.
+- Stage 5: launched the rebuilt app fresh (no on-disk store, no
+  onboarding-completed flag) via `open` and confirmed via `pgrep` it
+  started with no crash — this exercises the new onboarding sheet
+  presenting at launch. Confirmed via `defaults write .../
+  hasCompletedOnboarding -bool true` + relaunch that the app also
+  starts cleanly when onboarding is already marked complete (sheet
+  should not reappear — this was inferred from the stored flag and the
+  `!hasCompletedOnboarding()` check in `RootView.init`, not visually
+  confirmed, since no screen capture is available here). Noted that an
+  `osascript ... quit` sent while the onboarding sheet is showing is
+  intercepted (macOS treats it as "User canceled" rather than quitting)
+  — this is expected modal-sheet behavior, not a bug, and was confirmed
+  by observing that quit worked normally once the onboarding-completed
+  flag was set. Did not visually confirm the onboarding sheet's layout,
+  the new empty/search-empty sidebar states, code-block rendering,
+  auto-scroll behavior, or any accessibility label via VoiceOver — all
+  of these are implemented and (where logic-testable) unit-tested, but
+  not eyeballed or screen-reader-tested. Cleared the on-disk store and
+  onboarding flag again before finishing.
 
 ## Stage 2 — what's implemented
 
@@ -433,13 +504,16 @@ xcodebuild -project ChatterBat.xcodeproj -scheme ChatterBat \
   -destination 'platform=macOS' -derivedDataPath /tmp/ChatterBatDerivedData \
   -only-testing:ChatterBatTests test
 ```
-Result (Stage 4, current): **TEST SUCCEEDED** — 121/121 tests passed
-(11 new from Stage 4: `SwiftDataConversationRepositoryTests` (6) +
-`SwiftDataConversationRepositoryAdditionalTests` (5); all Stage 0–3
-suites still pass unchanged). Re-ran the full suite **3 times in a row**
-after the SwiftData fix — all 3 runs passed with 121/121 in 1.5–1.8s
-total, with zero hangs and zero new crash reports in
-`~/Library/Logs/DiagnosticReports/`.
+Result (Stage 5, current): **TEST SUCCEEDED** — 138/138 tests passed
+(17 new from Stage 5: `MessageContentParserTests` (11),
+`AutoScrollPolicyTests` (4), `UserDefaultsOnboardingStateStoreTests` (2);
+all Stage 0–4 suites still pass unchanged, 121 from before). One real
+bug was caught and fixed during this stage's own test run: the fenced-
+code-block parser initially dropped an empty code block (`` ``` ``
+immediately followed by `` ``` ``) because its flush function
+early-returned on empty pending lines — fixed by distinguishing "about
+to close a fence" from "ordinary end-of-text flush." Re-ran the full
+suite after the fix — 138/138, ~1.4s total.
 
 Full scheme test (`ChatterBatTests` + `ChatterBatUITests` together):
 Result: still **FAILS** at the `ChatterBatUITests` load step only (same
@@ -622,19 +696,45 @@ before the UI test bundle failed to load.
     doesn't crash with zero migration stages" — a real migration stage
     should be added and tested from a v1-populated store the first time
     the schema actually changes, not assumed to work by inspection.
-14. Given the SwiftData relationship/predicate/sortBy issues found this
-    stage, other untested `FetchDescriptor` usages elsewhere in the
+14. Given the SwiftData relationship/predicate/sortBy issues found in
+    Stage 4, other untested `FetchDescriptor` usages elsewhere in the
     codebase were not searched for (there are none currently — all
     persistence access goes through `SwiftDataConversationRepository`
     — but this is worth re-confirming if `Persistence/` grows).
+15. **Nothing in this stage was visually confirmed on screen** — no
+    screenshot tooling, no VoiceOver testing, no manual scroll-position
+    interaction, and no Tab-key-only navigation walkthrough were
+    possible in this environment (see Stage 0's original
+    `screencapture` limitation, which still applies). Everything in
+    this stage that has *decidable logic* (Markdown/code-block parsing,
+    auto-scroll follow/stop decisions, onboarding persistence) is unit-
+    tested; everything that is purely visual/interactive layout,
+    contrast, VoiceOver phrasing quality, and keyboard focus order
+    (especially the nested favorite-star button flagged in `ModelRow`)
+    is implemented per the brief's spec but genuinely unverified.
+    **Action for a human:** run the app, tab through the composer →
+    Send/Stop → sidebar → model picker without a mouse; turn on
+    VoiceOver and listen to a few messages and the onboarding sheet;
+    send a message containing a fenced code block and confirm it
+    renders monospaced with a working Copy button; scroll up during a
+    long streaming response and confirm it stops auto-following, then
+    scroll back down and confirm it resumes.
+16. Long-transcript performance (per the brief's Stage 5 requirement)
+    was not specifically profiled — `TranscriptView` uses `LazyVStack`
+    inside a `ScrollView`, which is the standard SwiftUI approach for
+    large lists, but no measurement was done with a very long
+    conversation (hundreds of messages) since generating one requires
+    either a live provider or extensive synthetic data not yet built
+    for this purpose.
 
 ## Next small task
 
-Begin Stage 5: native polish and MVP release gate — a deliberate
-Markdown/code-block rendering subset, copy actions, refined composer,
-first-run onboarding, empty/loading/offline/error states, full keyboard
-navigation and accessibility labels, light/dark appearance checks, and
-long-transcript performance. This is the last stage before the
-chat-first MVP is considered complete. See `docs/DEVELOPMENT_PLAN.md`
-and the original brief §9 (Markdown and message rendering), §5 (UX
-specification), and §11 (Stage 5).
+The chat-first MVP (Stages 0–5) is now complete per the brief's scope.
+Begin Stage 6: enhanced chat controls — capability-aware reasoning
+settings, a deliberately small set of OpenRouter routing controls,
+supported Venice advanced settings, usage/cost display with explicit
+unit handling, context management, and versioned JSON conversation
+export/import. Advanced controls must stay hidden by default and never
+weaken privacy guarantees silently on error. See `docs/DEVELOPMENT_PLAN.md`
+and the original brief §10 (Usage, cost, reasoning, and context) and §11
+(Stage 6).

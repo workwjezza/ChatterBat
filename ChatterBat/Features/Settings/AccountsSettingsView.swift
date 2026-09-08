@@ -41,6 +41,7 @@ private struct AccountCard: View {
                 )
             )
             .textFieldStyle(.roundedBorder)
+            .accessibilityLabel("\(service.displayName) API key")
 
             HStack {
                 Button("Save & Verify") {

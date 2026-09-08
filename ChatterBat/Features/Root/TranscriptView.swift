@@ -1,107 +1,88 @@
 import SwiftUI
 
-/// Plain-text transcript rendering for Stage 3.
+/// Transcript rendering: selectable, deliberate-subset Markdown (inline
+/// styling + fenced code blocks via `MessageContentView`), per-message
+/// service/model attribution, status badges, honest usage display, and
+/// a copy-response action.
 ///
-/// Deliberately minimal: selectable plain text only, no Markdown/code
-/// blocks (Stage 5) and no persistence-derived history (Stage 4) — this
-/// renders exactly what `ChatCoordinator` holds in memory right now.
+/// Auto-scroll behavior follows `AutoScrollPolicy`: new content scrolls
+/// into view only while the user hasn't scrolled away from the bottom,
+/// per the brief ("Scrolling up is respected during streaming" /
+/// "Auto-scroll resumes only when appropriate"). The policy's decisions
+/// are unit-tested (`AutoScrollPolicyTests`); the actual on-screen
+/// scrolling behavior wired up here has not been visually confirmed —
+/// see docs/STATUS.md.
 struct TranscriptView: View {
     let messages: [TranscriptMessage]
 
+    @State private var autoScrollPolicy = AutoScrollPolicy()
+
+    private static let bottomAnchorID = "bottom-anchor"
+
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
-                if messages.isEmpty {
-                    ContentUnavailableView(
-                        "No Messages Yet",
-                        systemImage: "bubble.left.and.bubble.right",
-                        description: Text("Select a model and send a message to get started.")
-                    )
-                    .padding(.top, 60)
-                } else {
-                    ForEach(messages) { message in
-                        MessageBubble(message: message)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    if messages.isEmpty {
+                        ContentUnavailableView(
+                            "No Messages Yet",
+                            systemImage: "bubble.left.and.bubble.right",
+                            description: Text("Select a model and send a message to get started.")
+                        )
+                        .padding(.top, 60)
+                    } else {
+                        ForEach(messages) { message in
+                            MessageBubble(message: message)
+                                .id(message.id)
+                        }
                     }
+                    Color.clear
+                        .frame(height: 1)
+                        .id(Self.bottomAnchorID)
+                        .background(
+                            GeometryReader { geometry in
+                                Color.clear.preference(
+                                    key: BottomAnchorOffsetKey.self,
+                                    value: geometry.frame(in: .named("transcriptScroll")).minY
+                                )
+                            }
+                        )
                 }
-            }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-private struct MessageBubble: View {
-    let message: TranscriptMessage
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(message.role == .user ? "You" : "Assistant")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                if let attribution = message.attribution {
-                    Text("· \(attribution.modelID) · \(attribution.service.displayName)")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                statusBadge
-            }
-
-            Text(message.content.isEmpty && message.status == .streaming ? "…" : message.content)
-                .textSelection(.enabled)
+                .padding()
                 .frame(maxWidth: .infinity, alignment: .leading)
-
-            if let usage = message.usage {
-                Text(usageText(usage))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+            }
+            .coordinateSpace(name: "transcriptScroll")
+            .onPreferenceChange(BottomAnchorOffsetKey.self) { minY in
+                // A large positive minY means the bottom anchor is far
+                // below the visible viewport (user scrolled up); a
+                // small/near-zero value means it's near the visible
+                // bottom edge. This threshold-based heuristic avoids
+                // needing the exact viewport height.
+                autoScrollPolicy.userDidScroll(atBottom: minY < 120)
+            }
+            .onChange(of: messages) { _, _ in
+                guard autoScrollPolicy.shouldAutoScrollToNewContent else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                }
+            }
+            .onChange(of: messages.map(\.id)) { _, _ in
+                // A different set of message IDs means we likely
+                // switched conversations — reset to "follow" so a
+                // previous conversation's scrolled-up state doesn't
+                // leak into this one.
+                autoScrollPolicy.reset()
             }
         }
-        .padding(10)
-        .background(.quaternary.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    @ViewBuilder
-    private var statusBadge: some View {
-        switch message.status {
-        case .streaming:
-            ProgressView().controlSize(.mini)
-        case .completed, .interrupted:
-            EmptyView()
-        case .cancelled:
-            Text("Stopped").font(.caption2).foregroundStyle(.orange)
-        case .failed(let reason):
-            Text(reason).font(.caption2).foregroundStyle(.red)
-        }
-    }
-
-    /// Formats only fields the provider actually reported. Per the
-    /// brief, a missing usage field must never be displayed as zero —
-    /// this only ever shows fields that are non-nil.
-    private func usageText(_ usage: ChatUsage) -> String {
-        var parts: [String] = []
-        if let prompt = usage.promptTokens { parts.append("\(prompt) prompt") }
-        if let completion = usage.completionTokens { parts.append("\(completion) completion") }
-        if let total = usage.totalTokens { parts.append("\(total) total") }
-        return parts.isEmpty ? "Usage unknown" : parts.joined(separator: " · ") + " tokens"
     }
 }
 
-#Preview("Transcript — Mixed States") {
-    TranscriptView(messages: [
-        TranscriptMessage(role: .user, content: "Hello there", status: .completed),
-        TranscriptMessage(
-            role: .assistant,
-            content: "Hi! How can I help?",
-            status: .completed,
-            attribution: ModelIdentity(service: .venice, modelID: "llama-3.2-3b"),
-            usage: ChatUsage(promptTokens: 12, completionTokens: 8, totalTokens: 20)
-        ),
-        TranscriptMessage(
-            role: .assistant,
-            content: "Partial response before stop...",
-            status: .cancelled,
-            attribution: ModelIdentity(service: .openRouter, modelID: "openai/gpt-4")
-        )
-    ])
+/// SwiftUI `PreferenceKey` carrying the bottom anchor's vertical offset
+/// within the scroll view's coordinate space, used to infer whether the
+/// user is currently scrolled near the bottom.
+private struct BottomAnchorOffsetKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
 }

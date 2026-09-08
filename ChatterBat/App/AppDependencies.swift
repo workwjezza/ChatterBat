@@ -31,6 +31,7 @@ struct AppDependencies {
     /// fetch must not happen from inside a SwiftUI view on this
     /// toolchain.
     let initialConversations: [Conversation]
+    let onboardingStateStore: OnboardingStateStore
 
     static func live() -> AppDependencies {
         let credentialStore = KeychainCredentialStore()
@@ -86,7 +87,8 @@ struct AppDependencies {
             openRouterChatClient: openRouterChatClient,
             chatCoordinator: chatCoordinator,
             conversationRepository: repository,
-            initialConversations: initialConversations
+            initialConversations: initialConversations,
+            onboardingStateStore: UserDefaultsOnboardingStateStore()
         )
     }
 

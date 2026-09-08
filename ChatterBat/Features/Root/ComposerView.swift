@@ -15,17 +15,22 @@ struct ComposerView: View {
     @Binding var text: String
     let isGenerating: Bool
     let canSend: Bool
+    /// Whether a model has been selected — used only to choose a more
+    /// helpful placeholder/hint; the actual Send-eligibility gate is
+    /// still `canSend`, set by the caller.
+    let hasSelectedModel: Bool
     let onSend: () -> Void
     let onStop: () -> Void
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField("Message", text: $text, axis: .vertical)
+            TextField(placeholder, text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...6)
                 .padding(8)
                 .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
                 .disabled(isGenerating)
+                .accessibilityLabel("Message")
                 .onSubmit {
                     if canSend { onSend() }
                 }
@@ -37,6 +42,7 @@ struct ComposerView: View {
                 .labelStyle(.iconOnly)
                 .help("Stop generating (Esc)")
                 .keyboardShortcut(.escape, modifiers: [])
+                .accessibilityLabel("Stop generating")
             } else {
                 Button(action: onSend) {
                     Label("Send", systemImage: "arrow.up.circle.fill")
@@ -45,16 +51,25 @@ struct ComposerView: View {
                 .disabled(!canSend)
                 .keyboardShortcut(.return, modifiers: .command)
                 .help("Send (Return, or ⌘Return) — Shift+Return for a new line")
+                .accessibilityLabel("Send message")
             }
         }
         .padding()
     }
+
+    private var placeholder: String {
+        hasSelectedModel ? "Message" : "Select a model to start chatting"
+    }
 }
 
 #Preview("Composer — Idle") {
-    ComposerView(text: .constant(""), isGenerating: false, canSend: false, onSend: {}, onStop: {})
+    ComposerView(text: .constant(""), isGenerating: false, canSend: false, hasSelectedModel: true, onSend: {}, onStop: {})
 }
 
 #Preview("Composer — Generating") {
-    ComposerView(text: .constant("In progress"), isGenerating: true, canSend: false, onSend: {}, onStop: {})
+    ComposerView(text: .constant("In progress"), isGenerating: true, canSend: false, hasSelectedModel: true, onSend: {}, onStop: {})
+}
+
+#Preview("Composer — No Model Selected") {
+    ComposerView(text: .constant(""), isGenerating: false, canSend: false, hasSelectedModel: false, onSend: {}, onStop: {})
 }

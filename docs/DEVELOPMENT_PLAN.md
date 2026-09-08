@@ -156,13 +156,41 @@ refresh after a real Send has not been manually confirmed with a live
 key (STATUS.md limitation 12); no real schema migration has ever been
 exercised (limitation 13).
 
-## Next stage: Stage 5 — Native polish and MVP release gate
+## Stage 5 summary (complete)
 
-Implement a deliberate Markdown/code-block rendering subset, copy
-actions, a refined composer, first-run onboarding, empty/loading/
-offline/error states, full keyboard navigation and accessibility
-labels, light/dark appearance, and long-transcript performance. This
-stage completes the chat-first MVP (Stages 0–5) — do not delay it for
-Stage 6/7 features. See the original brief §5 (UX specification), §9
-(Markdown and message rendering), and §11 Stage 5 for acceptance
-criteria.
+`MessageContentParser`/`MessageContentView`/`CodeBlockView` add a
+deliberate, fence-only Markdown/code-block rendering subset with per-
+code-block and per-message Copy actions, replacing the old plain-text-
+only `TranscriptView`. `AutoScrollPolicy` is a pure, unit-tested
+follow/stop-following decision object wired into `TranscriptView`'s
+scroll behavior. `OnboardingView` + `OnboardingStateStore` add a
+single, honest first-run welcome sheet that defers to the real
+Settings → Accounts UI rather than duplicating it. `SidebarView` now
+distinguishes a genuinely empty conversation list from a search with
+no matches. Accessibility labels/hints were added across the model
+picker, composer, sidebar, conversation toolbar, and Settings API key
+field — including an honestly-documented caveat about the model
+picker's nested favorite-star button's keyboard focus (`ModelRow`'s doc
+comment). 138/138 unit tests pass (17 new: `MessageContentParserTests`
+(11) — which caught and fixed a real empty-code-block parsing bug —
+`AutoScrollPolicyTests` (4), `UserDefaultsOnboardingStateStoreTests`
+(2)). This completes the chat-first MVP (Stages 0–5).
+
+Known gaps carried forward, all explicitly documented in
+`docs/STATUS.md` limitations 15–16: nothing in this stage was visually
+confirmed (no screen capture in this environment) — code-block
+rendering, the onboarding sheet's layout, the new sidebar empty states,
+actual on-screen auto-scroll behavior, and all accessibility labels via
+VoiceOver/keyboard-only navigation are implemented and, where the logic
+is decidable, unit-tested, but not eyeballed or screen-reader-tested.
+Long-transcript scrolling performance was not specifically profiled.
+
+## Next stage: Stage 6 — Enhanced chat controls
+
+Implement capability-aware reasoning settings, a deliberately small set
+of OpenRouter routing controls, supported Venice advanced settings,
+usage/cost display with explicit unit handling, context management, and
+versioned JSON conversation export/import. Advanced controls must stay
+hidden by default and must never silently weaken privacy guarantees on
+error. See the original brief §10 (Usage, cost, reasoning, and context)
+and §11 Stage 6 for acceptance criteria.

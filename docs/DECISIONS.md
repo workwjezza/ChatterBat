@@ -396,6 +396,56 @@ that never crashed across many repeated real launches. This does mean
 at startup; given the expected data volume (one user's local chat
 history) this is an acceptable trade-off for correctness.
 
+## Stage 5
+
+### Markdown support is deliberately fence-only, via a hand-written line scanner, not a general Markdown library
+
+**Decision:** `MessageContentParser` only recognizes fenced code blocks
+as a block-level construct; everything else is one plain-text blob
+rendered through SwiftUI's native `Text(markdown:)` with
+`.inlineOnlyPreservingWhitespace` (so it also never accidentally
+renders headings/lists/tables from that path).
+
+**Why:** The brief explicitly warns against assuming `Text` provides
+complete block-Markdown support and asks for "a deliberate, tested
+subset." A hand-written fence scanner is simple enough to reason about
+and test exhaustively (11 tests, including the unterminated-fence and
+empty-code-block edge cases), and avoids adding a third-party Markdown
+dependency for a deliberately small, well-defined subset. No third-party
+package was evaluated or introduced — consistent with the brief's "no
+third-party runtime dependencies for the initial stages" guidance.
+
+### Auto-scroll decision logic extracted into a plain, unit-testable `AutoScrollPolicy`
+
+**Decision:** The "should the transcript scroll to the newest message"
+decision lives in `AutoScrollPolicy`, a plain struct with no SwiftUI
+dependency, wired into `TranscriptView` via a `GeometryReader`-based
+bottom-anchor offset preference.
+
+**Why:** This environment has no interactive display, so any scroll
+behavior embedded directly in view code would be entirely unverifiable
+this session. Extracting the decision into a plain type means the
+*logic* (follow by default; stop following once the user scrolls away;
+resume on return to bottom or conversation switch) is fully covered by
+fast unit tests, while the remaining risk is narrowed to "is the
+SwiftUI wiring correct," which is now a smaller, more reviewable
+surface — explicitly flagged as unverified in `docs/STATUS.md` rather
+than claimed as tested.
+
+### First-run onboarding is one screen, not a wizard, and does not duplicate account-connection UI
+
+**Decision:** `OnboardingView` is a single sheet with an explanation and
+one button that opens Settings (the real Accounts UI) — it does not
+re-implement key entry, model selection, or a multi-step flow.
+
+**Why:** The brief's first-run flow describes several steps (explain
+billing, connect a service, pick a model), but ChatterBat already has a
+real, reachable Settings → Accounts flow and a real model picker;
+building a second, parallel version of either inside onboarding would
+be duplicated logic that could drift out of sync. Directing the user to
+the real settings UI keeps a single source of truth for account
+connection.
+
 ### Retry removes and re-sends rather than replaying stored request state
 
 **Decision:** `retryLastTurn` pops the failed assistant message and the

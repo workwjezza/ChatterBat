@@ -24,6 +24,7 @@ struct ConversationDetailView: View {
                 text: $draftText,
                 isGenerating: isGeneratingHere,
                 canSend: canSend,
+                hasSelectedModel: viewModel.selectedModel != nil,
                 onSend: attemptSend,
                 onStop: coordinator.stopGeneration
             )
@@ -38,6 +39,8 @@ struct ConversationDetailView: View {
                 .keyboardShortcut("k", modifiers: .command)
                 .help("Choose a model (⌘K)")
                 .disabled(isGeneratingHere)
+                .accessibilityLabel(viewModel.selectedModel == nil ? "Select a model" : "Model: \(modelButtonTitle)")
+                .accessibilityHint("Opens the model picker")
             }
         }
         .alert(

@@ -69,7 +69,8 @@ private struct GeneralSettingsView: View {
                 clients: [.venice: veniceChat, .openRouter: openRouterChat]
             ),
             conversationRepository: PreviewOnlyRepository(),
-            initialConversations: []
+            initialConversations: [],
+            onboardingStateStore: PreviewOnlyOnboardingStore()
         )
     )
 }
@@ -123,4 +124,9 @@ private final class PreviewOnlyRepository: ConversationRepository {
     func updateMessage(_ message: TranscriptMessage, inConversation conversationID: UUID) throws {}
     func deleteMessage(_ messageID: UUID, fromConversation conversationID: UUID) throws {}
     func interruptAllStreamingMessages() throws {}
+}
+
+private final class PreviewOnlyOnboardingStore: OnboardingStateStore {
+    func hasCompletedOnboarding() -> Bool { true }
+    func markOnboardingCompleted() {}
 }

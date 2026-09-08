@@ -4,6 +4,16 @@ import SwiftUI
 /// ID, capability badges (only shown when actually `.supported` — unknown
 /// or unsupported capabilities show nothing, per the brief's rule against
 /// conflating "unknown" with "unsupported"), and a favorite toggle.
+///
+/// KNOWN CAVEAT: the favorite star is a `Button` nested inside the row's
+/// outer selection `Button`. SwiftUI/AppKit generally hit-tests the
+/// innermost button correctly for mouse clicks, but nested buttons are a
+/// known rough edge for keyboard/VoiceOver focus order on macOS. This has
+/// not been manually verified with VoiceOver or Tab-only navigation in
+/// this environment (no interactive display) — see docs/STATUS.md. If a
+/// future manual pass finds the star isn't independently reachable by
+/// keyboard, consider moving it to a `.contextMenu` or a swipe/hover
+/// action instead of a nested button.
 struct ModelRow: View {
     let model: ModelInfo
     var viewModel: ModelPickerViewModel
@@ -30,6 +40,8 @@ struct ModelRow: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(model.displayName), \(model.service.displayName)")
+        .accessibilityHint("Selects this model for the next message")
     }
 
     private var detailRow: some View {
@@ -63,6 +75,7 @@ struct ModelRow: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(viewModel.isFavorite(model.identity) ? .yellow : .secondary)
+        .accessibilityLabel(viewModel.isFavorite(model.identity) ? "Remove from favorites" : "Add to favorites")
     }
 
     /// Formats known input/output pricing as USD per 1M tokens. Shows
