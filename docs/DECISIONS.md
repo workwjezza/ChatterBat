@@ -446,6 +446,97 @@ be duplicated logic that could drift out of sync. Directing the user to
 the real settings UI keeps a single source of truth for account
 connection.
 
+## Stage 6
+
+### OpenRouter cost is stored/displayed as "credits," never treated as equal to USD
+
+**Decision:** `ChatUsage.costCredits` is a distinct field from
+`costUSD`, and `MessageBubble` labels it "N credits," never "$N."
+
+**Why:** OpenRouter's Usage Accounting documentation describes
+`usage.cost` only as "Cost in credits" and never states a credit-to-
+USD exchange rate anywhere this stage's research found (checked the
+Usage Accounting page, the Credits API reference, the FAQ's billing
+section, and the pricing page). Venice's documented `cost.usd` field,
+by contrast, is explicitly USD. Presenting OpenRouter's credits as a
+dollar amount would be a guess dressed up as a fact — exactly what the
+brief's "unknown must never be displayed as if known" principle
+forbids, generalized from capability/pricing fields to cost reporting.
+
+### Only three OpenRouter provider-routing fields are exposed, not the full `provider` object
+
+**Decision:** `OpenRouterRoutingPreferences` exposes only
+`allow_fallbacks`, `data_collection`, and `zdr` — not `order`, `only`,
+`ignore`, `quantizations`, `sort`, `max_price`, or
+`enforce_distillable_text`, all of which are real, documented fields
+on OpenRouter's `provider` request object.
+
+**Why:** The brief explicitly asks for "a deliberately small set of
+OpenRouter routing controls," not full parity with OpenRouter's API
+surface. The three chosen fields are booleans/enums with fixed,
+self-explanatory values a UI can present with a toggle or picker with
+no extra data fetching. The excluded fields (`order`/`only`/`ignore`)
+need a list of provider slugs to choose from, which would require
+adding a new provider-catalog fetcher and picker UI — out of scope for
+"deliberately small." `quantizations`/`max_price`/`sort` are more
+advanced routing/cost-optimization concepts that don't map to any
+existing ChatterBat concern the way `data_collection`/`zdr` map to the
+privacy concerns Venice's privacy labels already surface.
+
+### Context boundary is a plain additive SwiftData column, not a new schema version
+
+**Decision:** `PersistedConversation.contextBoundaryMessageID: UUID?`
+was added directly to the existing `@Model` class with a default of
+`nil`, rather than introducing `ChatterBatSchemaV2` and a migration
+stage.
+
+**Why:** SwiftData performs this specific kind of change (a new
+optional attribute with a default value on an existing model) as an
+automatic lightweight migration — no new `VersionedSchema` is needed
+for it to work. Introducing a full new schema version for a single
+optional column would add migration-plan complexity with no
+corresponding benefit, and this project's Stage 4 crash story already
+demonstrated that SwiftData's more advanced machinery
+(`@Relationship`, `#Predicate`, `sortBy:`) is fragile on this
+toolchain — minimizing exposure to that machinery further is a
+deliberate choice, not an oversight. The trade-off (documented
+honestly in `docs/STATUS.md`) is that this has only been verified
+against freshly-created stores, not a real pre-Stage-6 store with
+existing data.
+
+### Context boundary hides nothing; it only changes future-request context
+
+**Decision:** `ChatCoordinator.setContextBoundary` never deletes,
+hides, or visually dims any message in the transcript. It only changes
+which messages `eligibleOutgoingMessages` includes in the *next*
+request's `messages` array.
+
+**Why:** The brief's context-management requirement is about giving
+the user control over token/cost usage, not about editing history. A
+feature that silently made past messages disappear from view would be
+surprising and could look like data loss. Keeping the full transcript
+always visible, with only a small marker showing where the boundary
+is, keeps the mental model simple: "everything you see happened;
+only some of it counts toward the next request."
+
+### Conversation export always creates a new conversation with a fresh ID, and only carries transcript-visible fields
+
+**Decision:** `ConversationExport` has no field for an API key or
+account identifier, and `ConversationExportCoding.importAsNewConversation`
+always assigns a fresh `Conversation.id` rather than reusing the
+exported one.
+
+**Why:** Per the brief, API keys must live only in Keychain and never
+appear in logs, exports, or source — an export format is exactly the
+kind of artifact a user might email or upload somewhere, so it must be
+structurally incapable of carrying a secret, not just conventionally
+kept free of one. A dedicated test scans the encoded JSON for
+key-like field names to catch any future accidental addition. Fresh
+IDs on import mean importing the same file twice (e.g. after being
+sent to another Mac and back) creates two independent conversations
+rather than silently overwriting or merging with an existing one,
+which would risk losing data with no undo.
+
 ### Retry removes and re-sends rather than replaying stored request state
 
 **Decision:** `retryLastTurn` pops the failed assistant message and the

@@ -14,6 +14,12 @@ import SwiftUI
 /// see docs/STATUS.md.
 struct TranscriptView: View {
     let messages: [TranscriptMessage]
+    /// The current context boundary, if any — see
+    /// `ChatCoordinator.setContextBoundary`. Passed through so
+    /// `MessageBubble` can visibly mark which message it is (Stage 6).
+    var contextBoundaryMessageID: UUID? = nil
+    /// Called when the user chooses "Start Context Here" on a message.
+    var onStartContextHere: (UUID) -> Void = { _ in }
 
     @State private var autoScrollPolicy = AutoScrollPolicy()
 
@@ -32,8 +38,12 @@ struct TranscriptView: View {
                         .padding(.top, 60)
                     } else {
                         ForEach(messages) { message in
-                            MessageBubble(message: message)
-                                .id(message.id)
+                            MessageBubble(
+                                message: message,
+                                isContextBoundary: message.id == contextBoundaryMessageID,
+                                onStartContextHere: { onStartContextHere(message.id) }
+                            )
+                            .id(message.id)
                         }
                     }
                     Color.clear

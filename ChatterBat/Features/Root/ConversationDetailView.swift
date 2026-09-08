@@ -8,15 +8,26 @@ import SwiftUI
 /// Markdown/code-block rendering and copy actions are Stage 5.
 struct ConversationDetailView: View {
     let conversation: Conversation
-    var viewModel: AppViewModel
+    // @Bindable (rather than a plain `var`) so `AdvancedSettingsView`'s
+    // `$viewModel.advancedChatSettings` binding below can write back
+    // to the shared view model — needed as of Stage 6; earlier stages
+    // only ever read from `viewModel`.
+    @Bindable var viewModel: AppViewModel
     var coordinator: ChatCoordinator
 
     @State private var draftText = ""
     @State private var pendingServiceSwitchModel: ModelInfo?
+    @State private var isAdvancedSettingsPresented = false
 
     var body: some View {
         VStack(spacing: 0) {
-            TranscriptView(messages: coordinator.messages(for: conversation.id))
+            TranscriptView(
+                messages: coordinator.messages(for: conversation.id),
+                contextBoundaryMessageID: coordinator.contextBoundaryMessageID(for: conversation.id),
+                onStartContextHere: { messageID in
+                    coordinator.setContextBoundary(messageID, in: conversation.id)
+                }
+            )
 
             Divider()
 
@@ -42,6 +53,28 @@ struct ConversationDetailView: View {
                 .accessibilityLabel(viewModel.selectedModel == nil ? "Select a model" : "Model: \(modelButtonTitle)")
                 .accessibilityHint("Opens the model picker")
             }
+            ToolbarItem {
+                Button {
+                    isAdvancedSettingsPresented = true
+                } label: {
+                    Label("Advanced Settings", systemImage: "slider.horizontal.3")
+                }
+                .help("Advanced chat settings")
+                .accessibilityLabel("Advanced chat settings")
+                .popover(isPresented: $isAdvancedSettingsPresented) {
+                    AdvancedSettingsView(
+                        settings: $viewModel.advancedChatSettings,
+                        model: viewModel.selectedModel,
+                        contextUsage: viewModel.selectedModel.map {
+                            coordinator.contextUsageEstimate(for: conversation.id, model: $0)
+                        },
+                        hasContextBoundary: coordinator.contextBoundaryMessageID(for: conversation.id) != nil,
+                        onClearContextBoundary: {
+                            coordinator.setContextBoundary(nil, in: conversation.id)
+                        }
+                    )
+                }
+            }
         }
         .alert(
             "Share history with \(pendingServiceSwitchModel?.service.displayName ?? "")?",
@@ -53,7 +86,7 @@ struct ConversationDetailView: View {
             Button("Cancel", role: .cancel) { pendingServiceSwitchModel = nil }
             Button("Send") {
                 if let model = pendingServiceSwitchModel {
-                    coordinator.send(text: draftText, in: conversation.id, using: model)
+                    coordinator.send(text: draftText, in: conversation.id, using: model, settings: viewModel.advancedChatSettings)
                     draftText = ""
                 }
                 pendingServiceSwitchModel = nil
@@ -93,7 +126,7 @@ struct ConversationDetailView: View {
             pendingServiceSwitchModel = model
             return
         }
-        coordinator.send(text: draftText, in: conversation.id, using: model)
+        coordinator.send(text: draftText, in: conversation.id, using: model, settings: viewModel.advancedChatSettings)
         draftText = ""
     }
 }

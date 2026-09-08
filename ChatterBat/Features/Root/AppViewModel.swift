@@ -23,6 +23,14 @@ final class AppViewModel {
     /// itself send a request.
     var selectedModel: ModelInfo?
 
+    /// Advanced, per-send settings (reasoning effort, Venice thinking
+    /// controls, OpenRouter routing) — Stage 6. Same "simple app-wide
+    /// current selection" treatment as `selectedModel`: not persisted
+    /// per-conversation, and every field defaults to a no-op value, per
+    /// the brief's "advanced controls must stay hidden by default"
+    /// requirement.
+    var advancedChatSettings = AdvancedChatSettings()
+
     /// `nil` until `loadFromRepository()` runs (or in previews/tests that
     /// never call it), in which case conversation-list mutations stay
     /// in-memory-only — this lets existing previews/tests keep working
@@ -141,6 +149,97 @@ final class AppViewModel {
             }
         }
         conversations[index].title = trimmed
+    }
+
+    /// Errors specific to export/import, surfaced to the user via
+    /// `exportError`/`importError` rather than an `assertionFailure` —
+    /// unlike the repository-write failures above (which are treated
+    /// as "should never realistically happen" internal-consistency
+    /// bugs), a bad import file is an entirely expected, user-facing
+    /// situation (wrong file picked, future/foreign format, corrupted
+    /// download) that deserves a real, visible message.
+    enum ExportImportError: Error, Equatable {
+        case encodingFailed
+        case decodingFailed
+        case persistFailed
+        case unsupportedSchemaVersion(Int)
+
+        var userMessage: String {
+            switch self {
+            case .encodingFailed:
+                return "Couldn't prepare this conversation for export."
+            case .decodingFailed:
+                return "This file isn't a ChatterBat conversation export."
+            case .persistFailed:
+                return "The file was read, but the imported conversation couldn't be saved."
+            case .unsupportedSchemaVersion(let version):
+                return "This file was exported by a newer version of ChatterBat (format \(version)) and can't be imported here."
+            }
+        }
+    }
+
+    private(set) var lastExportImportError: ExportImportError?
+
+    /// Builds export data for `conversation`, using the repository's
+    /// full transcript (not just whatever happens to be cached in
+    /// `ChatCoordinator`'s in-memory `transcripts`, which this view
+    /// model has no access to) so exporting a conversation that hasn't
+    /// been opened this session still works.
+    func exportData(for conversation: Conversation) -> Data? {
+        lastExportImportError = nil
+        guard let repository else { return nil }
+        do {
+            let messages = try repository.loadMessages(for: conversation.id)
+            let export = ConversationExportCoding.export(conversation: conversation, messages: messages)
+            return try ConversationExportCoding.encode(export)
+        } catch {
+            lastExportImportError = .encodingFailed
+            return nil
+        }
+    }
+
+    /// Imports `data` as a brand-new conversation (never overwriting or
+    /// merging with an existing one — see
+    /// `ConversationExportCoding.importAsNewConversation`), persists it
+    /// through the repository if one is attached, and selects it.
+    /// Returns `true` on success; on failure, `lastExportImportError`
+    /// is set to a specific, user-presentable reason.
+    @discardableResult
+    func importConversation(from data: Data) -> Bool {
+        lastExportImportError = nil
+        let export: ConversationExport
+        do {
+            export = try ConversationExportCoding.decode(data)
+        } catch let error as ConversationExportCoding.ImportError {
+            if case .unsupportedSchemaVersion(let version) = error {
+                lastExportImportError = .unsupportedSchemaVersion(version)
+            }
+            return false
+        } catch {
+            lastExportImportError = .decodingFailed
+            return false
+        }
+
+        let (imported, messages) = ConversationExportCoding.importAsNewConversation(export)
+
+        if let repository {
+            do {
+                let created = try repository.createConversation(title: imported.title)
+                for message in messages {
+                    try repository.appendMessage(message, toConversation: created.id)
+                }
+                conversations.insert(created, at: 0)
+                selectedConversationID = created.id
+                return true
+            } catch {
+                lastExportImportError = .persistFailed
+                return false
+            }
+        }
+
+        conversations.insert(imported, at: 0)
+        selectedConversationID = imported.id
+        return true
     }
 
     /// Refreshes one conversation's `lastMessagePreview`/`updatedAt` from

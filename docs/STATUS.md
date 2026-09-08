@@ -2,8 +2,115 @@
 
 ## Last completed stage
 
-**Stage 5 — Native polish and MVP release gate.** Complete. This
-finishes the chat-first MVP (Stages 0–5).
+**Stage 6 — Enhanced chat controls.** Complete.
+
+## Stage 6 — what's implemented
+
+- `AdvancedChatSettings` (+ `ReasoningEffort`, `VeniceAdvancedSettings`,
+  `OpenRouterRoutingPreferences`, `DataCollectionPreference`): a
+  deliberately small set of per-send advanced controls. Every field
+  defaults to a value that changes nothing about the request that
+  would otherwise be sent, per the brief's "advanced controls must
+  stay hidden by default." `applicable(to:)` is the single,
+  unit-tested place capability-aware gating happens: `.unknown`
+  reasoning support is treated the same as `.unsupported` for
+  *request-safety* purposes (never send a parameter a model might
+  reject), even though `.unknown` displays differently from
+  `.unsupported` everywhere else in the UI — 9 dedicated tests.
+- Provider fields chosen after re-verifying current docs during this
+  stage: Venice's `reasoning_effort` (top-level string) and
+  `venice_parameters.{disable_thinking, strip_thinking_response}`
+  (booleans); OpenRouter's `reasoning_effort` (same field, shared
+  vocabulary) and `provider.{allow_fallbacks, data_collection, zdr}`
+  (verified exact field names/defaults/allowed values against
+  OpenRouter's Provider Routing docs). OpenRouter's richer
+  `order`/`only`/`ignore`/`quantizations`/`sort` provider-routing
+  fields were deliberately *not* exposed — per the brief's "a
+  deliberately small set," and because those need a separate
+  provider-slug catalog ChatterBat doesn't fetch anywhere yet.
+- `ChatRequestBuilder.body`/`.requestData` now take `service:` and
+  `settings:` and add `reasoning_effort`/`venice_parameters`/`provider`
+  only when they'd differ from doing nothing — 8 dedicated tests
+  confirm each field is included only when non-default and never sent
+  to the wrong service.
+- `ChatStreamingClient` protocol gained a `settings:` parameter; a
+  protocol-extension overload without it (defaulting to
+  `AdvancedChatSettings()`) means every Stage 0–5 call site and test
+  compiles unchanged.
+- `ChatUsage` gained `costUSD`/`costCredits` — kept as two distinct,
+  never-conflated fields rather than one generic "cost," because
+  Venice's non-streaming response documents an actual `cost.usd` (real
+  USD), while OpenRouter's `usage.cost` is documented only as "cost in
+  credits" — no OpenRouter documentation page found during this
+  stage's research states a credit-to-USD exchange rate, so treating
+  it as USD would misrepresent real spend. `ChatStreamDecoder` parses
+  both, each only from its own service's documented location; 3 new
+  decoder tests, including one that explicitly asserts OpenRouter's
+  cost is never read into `costUSD`.
+- `MessageBubble`'s usage footer now appends cost with its actual unit
+  label ("$X.XXXXX" or "N credits") whenever the provider reported it.
+- **Context management**: `ChatCoordinator.setContextBoundary`/
+  `contextBoundaryMessageID`/`contextUsageEstimate`. A context boundary
+  never deletes or hides any message — it only changes which messages
+  are included in *future* sends' context, set via a message's own
+  "Start Context Here" context-menu action (`MessageBubble`) and
+  cleared from the Advanced Settings popover. Persisted via a new
+  plain `PersistedConversation.contextBoundaryMessageID: UUID?` column
+  (see the known gap below) and
+  `ConversationRepository.contextBoundaryMessageID(for:)`/
+  `.setContextBoundary(_:forConversation:)`. `ContextUsageEstimate` is
+  a pure, honestly-labeled *rough estimate* (character-count-based,
+  never a real tokenizer) of how much of the next send would use —
+  never displayed without "estimated," never used to auto-truncate
+  anything. 5 new coordinator tests + 5 `ContextUsageEstimateTests` +
+  4 new SwiftData persistence tests for the new column.
+- **Versioned JSON export/import**: `ConversationExport`/
+  `ConversationExportCoding`. Every export carries an explicit
+  `schemaVersion`; `decode` rejects (rather than silently misreads) any
+  file with a newer version than this build understands. Export
+  includes only conversation/message content already visible in the
+  transcript — no API keys, no account identifiers (verified by a
+  dedicated test scanning the encoded JSON for key-like field names).
+  Import always creates a brand-new conversation with a fresh ID
+  (never overwrites/merges), so importing the same file twice yields
+  two independent conversations. Dates round-trip via a custom ISO
+  8601-with-fractional-seconds codec (plain `.iso8601` would have
+  truncated to whole seconds); this still loses precision below one
+  millisecond, an accepted, documented limitation for a "conversation
+  last updated" display field. Wired into `SidebarView` via
+  `.fileExporter`/`.fileImporter`; `AppViewModel` surfaces specific
+  user-presentable errors (never generic) for decode failure vs.
+  unsupported future schema vs. persist failure. 7
+  `ConversationExportCodingTests` + 6 `AppViewModelExportImportTests`.
+- `AdvancedSettingsView`: a toolbar popover showing only the sections
+  that apply to the currently-selected model (reasoning controls only
+  when `supportsReasoning == .supported`; Venice/OpenRouter sections
+  only for their own service), plus the context-usage readout and a
+  "Clear Context Boundary" action.
+- 190/190 unit tests pass (52 new since Stage 5's 138: new test files
+  `AdvancedChatSettingsTests`, `ChatRequestBuilderTests`,
+  `ContextUsageEstimateTests`, `ChatCoordinatorAdvancedSettingsTests`,
+  `SwiftDataConversationRepositoryContextBoundaryTests`,
+  `ConversationExportCodingTests`, `AppViewModelExportImportTests`,
+  plus additions to `ChatStreamDecoderTests`).
+
+**Known gap, honestly documented:** `PersistedConversation.contextBoundaryMessageID`
+was added as a plain optional column with a default value rather than
+a new `ChatterBatSchemaV1`→`V2` `VersionedSchema`/`SchemaMigrationPlan`
+stage. This is the correct call for a purely-additive, always-optional
+field under SwiftData's automatic lightweight migration — but it has
+only been exercised against **freshly created** in-memory and on-disk
+stores in this stage's testing (all
+`SwiftDataConversationRepositoryContextBoundaryTests` use
+`ChatterBatModelContainer.inMemory()`, and manual app launches used a
+store already wiped clean per this project's manual-testing
+convention). It has **not** been verified against a real pre-Stage-6
+on-disk store that already contained conversations created before this
+column existed. **Action for a human:** before relying on this with
+real user data, build the pre-Stage-6 commit, run it once to create a
+store with real conversations, then run the Stage-6 build against that
+same store file and confirm it still launches and those conversations
+still load correctly.
 
 ## Stage 5 — what's implemented
 
@@ -521,6 +628,22 @@ root cause as Stage 0, unchanged by this stage's work — see Known
 Limitations). Unit tests still ran and passed in the same invocation
 before the UI test bundle failed to load.
 
+Result (Stage 6, current): **TEST SUCCEEDED** — 190/190 tests passed
+(52 new: `AdvancedChatSettingsTests` (9), `ChatRequestBuilderTests`
+(8), `ContextUsageEstimateTests` (5), `ChatCoordinatorAdvancedSettingsTests`
+(7), `SwiftDataConversationRepositoryContextBoundaryTests` (5),
+`ConversationExportCodingTests` (7), `AppViewModelExportImportTests`
+(6), plus 3 new cases added to the existing `ChatStreamDecoderTests`;
+all Stage 0–5 suites still pass unchanged, 138 from before). One real
+issue was caught by this stage's own new tests: the initial ISO 8601
+date-encoding strategy for conversation export (plain `.iso8601`) was
+lossy across an encode/decode round trip; fixed with a custom
+fractional-seconds-aware codec (still millisecond-precision, not
+perfectly lossless — see the Stage 6 "known gap" note above). Re-ran
+the full suite 3 times consecutively after all fixes — 190/190 every
+time, 1.4–1.9s total, zero hangs, zero new crash reports in
+`~/Library/Logs/DiagnosticReports/`.
+
 ## Manual verification performed
 
 - Stage 0: launched the built `.app` directly (`open .../ChatterBat.app`);
@@ -576,6 +699,34 @@ before the UI test bundle failed to load.
   by `ChatCoordinatorTests`/`ChatCoordinatorAdditionalTests`/
   `StandardChatStreamingClientTests` against fakes, run 3 times
   consecutively with no flakiness — but never against a real provider.
+- Stage 6: rebuilt and launched the app after adding the advanced
+  settings popover, context-boundary context-menu action, and export/
+  import UI — confirmed via `pgrep` it starts with no crash on a
+  freshly-wiped store (exercising the new `contextBoundaryMessageID`
+  column's default value on brand-new `PersistedConversation` rows).
+  Relaunched 3 more times in a row, each terminated cleanly via `kill`,
+  with zero new crash reports. Attempted to script a full interactive
+  walkthrough (create a chat, open the Advanced Settings popover,
+  right-click a message for "Start Context Here," export via ⌘-less
+  toolbar button, re-import the file) via `osascript`
+  keystroke-sending, but this environment's `osascript` has no
+  Accessibility permission ("osascript is not allowed to send
+  keystrokes") — the same class of limitation as every prior stage's
+  "no interactive display" note, just hit at the keystroke-automation
+  layer this time instead of at `screencapture`. As a result: the
+  popover's actual on-screen layout/sections-shown-per-model, the
+  message context menu's "Start Context Here" item, the sidebar's
+  Export…/Import Conversation… menu items and their native
+  save/open-panel behavior, and the whole export→import round trip as
+  a real user action have **not** been visually or interactively
+  confirmed — only implemented and unit-tested (`AppViewModelExportImportTests`
+  covers the underlying encode/decode/persist logic without any file
+  panel). **Action for a human:** actually click through Advanced
+  Settings for a Venice reasoning model and an OpenRouter model,
+  right-click a message and confirm the boundary marker appears on the
+  right message, export a real conversation to a file, inspect the
+  JSON, and re-import it to confirm it appears as a new, correct
+  conversation.
 
 ## Known limitations
 
@@ -726,15 +877,43 @@ before the UI test bundle failed to load.
     conversation (hundreds of messages) since generating one requires
     either a live provider or extensive synthetic data not yet built
     for this purpose.
+17. **No `osascript`/UI-automation walkthrough of Stage 6's new UI was
+    possible** — this environment's `osascript` lacks the
+    Accessibility permission needed to send keystrokes or drive
+    controls (confirmed via the literal error "osascript is not
+    allowed to send keystrokes"). The Advanced Settings popover,
+    per-message "Start Context Here" context-menu item and its visible
+    boundary marker, and the sidebar's Export…/Import Conversation…
+    `.fileExporter`/`.fileImporter` flow are implemented and covered by
+    unit tests for their underlying logic, but the actual on-screen
+    behavior (popover layout and section visibility per model, native
+    save/open panel behavior, real file round-trip) has not been
+    interactively exercised. See the Stage 6 manual-verification entry
+    above for the specific human action recommended.
+18. `PersistedConversation.contextBoundaryMessageID` (the new
+    Stage 6 column) has only been tested against freshly-created
+    stores, never against a real pre-Stage-6 on-disk store with
+    existing data — see the "Known gap" note under Stage 6's
+    what's-implemented section above for the specific verification
+    step a human should run before trusting this with real user data.
+19. OpenRouter's richer provider-routing controls (`order`, `only`,
+    `ignore`, `quantizations`, `sort`, `max_price`, `enforce_distillable_text`)
+    were deliberately not implemented this stage — only
+    `allow_fallbacks`, `data_collection`, and `zdr` are exposed. If a
+    future stage wants to expose provider ordering/allow-listing, it
+    will need a way to fetch and display OpenRouter's provider-slug
+    catalog first (there is currently no fetcher for it anywhere in
+    the codebase).
 
 ## Next small task
 
-The chat-first MVP (Stages 0–5) is now complete per the brief's scope.
-Begin Stage 6: enhanced chat controls — capability-aware reasoning
-settings, a deliberately small set of OpenRouter routing controls,
-supported Venice advanced settings, usage/cost display with explicit
-unit handling, context management, and versioned JSON conversation
-export/import. Advanced controls must stay hidden by default and never
-weaken privacy guarantees silently on error. See `docs/DEVELOPMENT_PLAN.md`
-and the original brief §10 (Usage, cost, reasoning, and context) and §11
-(Stage 6).
+The chat-first MVP (Stages 0–5) plus Stage 6's enhanced chat controls
+are now complete per the brief's scope. Begin Stage 7: a
+permission-controlled, tool-using agent beta — explicitly scoped to
+read-only tools, with every tool invocation visible and individually
+approvable by the user before it runs, never auto-approved, and never
+silently expanding scope beyond what's shown. This is explicitly *not*
+part of the initial chat-first product and should be built as a
+clearly-separated, optional mode. See `docs/DEVELOPMENT_PLAN.md` and
+the original brief §11 (Stage 7) and its permission-model requirements
+before starting.

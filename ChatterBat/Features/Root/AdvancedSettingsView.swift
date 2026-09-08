@@ -1,0 +1,137 @@
+import SwiftUI
+
+/// Popover content for Stage 6's advanced, capability-aware chat
+/// controls: reasoning effort, Venice-only thinking controls,
+/// OpenRouter-only routing preferences, and a context-usage readout
+/// with an explicit "reset context" action.
+///
+/// Every section only appears when it actually applies to the
+/// currently-selected model — per the brief, advanced controls must
+/// stay hidden by default and must never be shown for a model that
+/// can't use them. `model == nil` (no model selected yet) shows
+/// nothing but the usage/context section, since there's nothing else
+/// to configure yet.
+struct AdvancedSettingsView: View {
+    @Binding var settings: AdvancedChatSettings
+    let model: ModelInfo?
+    let contextUsage: ContextUsageEstimate?
+    /// Whether a context boundary is currently set — see
+    /// `ChatCoordinator.setContextBoundary`. The boundary is *set* from
+    /// a message's own context menu (`MessageBubble`'s "Start Context
+    /// Here" action), not from this popover; this popover only shows
+    /// the current usage estimate and offers to clear an existing
+    /// boundary.
+    let hasContextBoundary: Bool
+    let onClearContextBoundary: () -> Void
+
+    var body: some View {
+        Form {
+            if let model {
+                if model.supportsReasoning == .supported {
+                    Section("Reasoning") {
+                        Picker("Effort", selection: $settings.reasoningEffort) {
+                            Text("Default").tag(ReasoningEffort?.none)
+                            ForEach(ReasoningEffort.allCases) { effort in
+                                Text(effort.displayName).tag(ReasoningEffort?.some(effort))
+                            }
+                        }
+                        if model.service == .venice {
+                            Toggle("Disable thinking", isOn: $settings.venice.disableThinking)
+                            Toggle("Hide thinking from response", isOn: $settings.venice.stripThinkingResponse)
+                        }
+                    }
+                } else if model.supportsReasoning == .unknown {
+                    Section {
+                        Text("Reasoning support for this model is unknown, so reasoning controls are hidden.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if model.service == .openRouter {
+                    Section("OpenRouter Routing") {
+                        Toggle("Allow fallback providers", isOn: $settings.openRouterRouting.allowFallbacks)
+                        Picker("Data collection", selection: $settings.openRouterRouting.dataCollection) {
+                            ForEach(DataCollectionPreference.allCases) { preference in
+                                Text(preference.displayName).tag(preference)
+                            }
+                        }
+                        Toggle("Zero Data Retention only", isOn: $settings.openRouterRouting.zdr)
+                    }
+                }
+            } else {
+                Section {
+                    Text("Select a model to see its available advanced settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Context") {
+                if let contextUsage {
+                    contextUsageRow(contextUsage)
+                }
+                if hasContextBoundary {
+                    Text("A context boundary is set — only messages from that point onward are sent as context.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Button("Clear Context Boundary") {
+                        onClearContextBoundary()
+                    }
+                } else {
+                    Text("Use \"Start Context Here\" on a message to send only that message and later ones as context.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
+    }
+
+    private func contextUsageRow(_ usage: ContextUsageEstimate) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(usage.messageCount) message\(usage.messageCount == 1 ? "" : "s") · ~\(usage.estimatedTokens) estimated tokens")
+                .font(.caption)
+            if let percent = usage.percentOfContextWindow {
+                Text("~\(Int(percent))% of this model's context window (estimate)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Context window size unknown for this model.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+#Preview("Advanced Settings — Venice Reasoning Model") {
+    AdvancedSettingsView(
+        settings: .constant(AdvancedChatSettings()),
+        model: ModelInfo(
+            identity: ModelIdentity(service: .venice, modelID: "deepseek-r1"),
+            displayName: "DeepSeek R1",
+            contextLength: 32000,
+            maxOutputTokens: nil,
+            pricing: .unknown,
+            supportsTools: .unknown,
+            supportsReasoning: .supported,
+            supportsVision: .unknown,
+            privacyDescription: "private"
+        ),
+        contextUsage: ContextUsageEstimate(messageCount: 4, characterCount: 800, estimatedTokens: 200, percentOfContextWindow: 0.6),
+        hasContextBoundary: false,
+        onClearContextBoundary: {}
+    )
+}
+
+#Preview("Advanced Settings — No Model Selected") {
+    AdvancedSettingsView(
+        settings: .constant(AdvancedChatSettings()),
+        model: nil,
+        contextUsage: nil,
+        hasContextBoundary: false,
+        onClearContextBoundary: {}
+    )
+}

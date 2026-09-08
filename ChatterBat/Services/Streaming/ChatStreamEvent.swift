@@ -36,6 +36,12 @@ enum ChatStreamEvent: Equatable, Sendable {
 /// callers must not crash on either case; an invalid payload is treated
 /// as "no event this frame," not a fatal error, per the brief's
 /// requirement not to let a malformed frame crash the stream loop.
+///
+/// Cost decoding (Stage 6): a top-level `cost.usd` (Venice) or a
+/// `usage.cost` number (OpenRouter, documented as "cost in credits") is
+/// read alongside token usage, into `ChatUsage.costUSD`/`costCredits`
+/// respectively — see `ChatUsage`'s doc comment for why these are
+/// never merged into one field.
 enum ChatStreamDecoder {
     static func decode(_ payload: String) -> ChatStreamEvent? {
         if payload == "[DONE]" {
@@ -70,11 +76,21 @@ enum ChatStreamDecoder {
         }
 
         if let usageObject = json["usage"] as? [String: Any] {
+            // Venice: a top-level `cost: {usd, diem}` object, documented
+            // sibling of `usage` on the non-streaming response; treated
+            // the same way if present on a streaming frame. OpenRouter:
+            // `usage.cost`, documented as "Cost in credits" — never
+            // assumed to equal USD (see ChatUsage's doc comment).
+            let veniceCostObject = json["cost"] as? [String: Any]
+            let costUSD = ModelCatalogDecoding.decimal(veniceCostObject?["usd"])
+            let costCredits = ModelCatalogDecoding.decimal(usageObject["cost"])
             return .usage(
                 ChatUsage(
                     promptTokens: ModelCatalogDecoding.int(usageObject["prompt_tokens"]),
                     completionTokens: ModelCatalogDecoding.int(usageObject["completion_tokens"]),
-                    totalTokens: ModelCatalogDecoding.int(usageObject["total_tokens"])
+                    totalTokens: ModelCatalogDecoding.int(usageObject["total_tokens"]),
+                    costUSD: costUSD,
+                    costCredits: costCredits
                 )
             )
         }

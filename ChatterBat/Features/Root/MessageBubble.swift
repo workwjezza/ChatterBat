@@ -4,14 +4,24 @@ import AppKit
 #endif
 
 /// One message row: role/attribution/status header, rendered content
-/// (`MessageContentView`), usage footer, and a copy-response action.
+/// (`MessageContentView`), usage/cost footer, a copy-response action,
+/// and (Stage 6) a "Start Context Here" action plus a visible marker
+/// when this message is the conversation's current context boundary.
 struct MessageBubble: View {
     let message: TranscriptMessage
+    var isContextBoundary: Bool = false
+    var onStartContextHere: () -> Void = {}
 
     @State private var didCopy = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if isContextBoundary {
+                Label("Context starts here", systemImage: "arrow.down.to.line")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.blue)
+            }
+
             HStack(spacing: 6) {
                 Text(message.role == .user ? "You" : "Assistant")
                     .font(.caption.bold())
@@ -51,6 +61,11 @@ struct MessageBubble: View {
         }
         .padding(10)
         .background(.quaternary.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+        .contextMenu {
+            Button("Start Context Here") {
+                onStartContextHere()
+            }
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
     }
@@ -71,13 +86,31 @@ struct MessageBubble: View {
 
     /// Formats only fields the provider actually reported. Per the
     /// brief, a missing usage field must never be displayed as zero —
-    /// this only ever shows fields that are non-nil.
+    /// this only ever shows fields that are non-nil. Cost is always
+    /// labeled with its actual unit ("USD" or "credits") — see
+    /// `ChatUsage`'s doc comment for why these are never conflated.
     private func usageText(_ usage: ChatUsage) -> String {
         var parts: [String] = []
         if let prompt = usage.promptTokens { parts.append("\(prompt) prompt") }
         if let completion = usage.completionTokens { parts.append("\(completion) completion") }
         if let total = usage.totalTokens { parts.append("\(total) total") }
-        return parts.isEmpty ? "Usage unknown" : parts.joined(separator: " · ") + " tokens"
+        var text = parts.isEmpty ? "Usage unknown" : parts.joined(separator: " · ") + " tokens"
+        if let costUSD = usage.costUSD {
+            text += " · \(formattedUSD(costUSD))"
+        }
+        if let costCredits = usage.costCredits {
+            text += " · \(costCredits) credits"
+        }
+        return text
+    }
+
+    private func formattedUSD(_ amount: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "USD"
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 5
+        return formatter.string(from: amount as NSDecimalNumber) ?? "$\(amount)"
     }
 
     private var accessibilityDescription: String {

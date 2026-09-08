@@ -20,12 +20,16 @@ final class FakeChatStreamingClient: ChatStreamingClient, @unchecked Sendable {
         self.errorToThrowAfterEvents = errorToThrowAfterEvents
     }
 
+    private(set) var receivedSettings: [AdvancedChatSettings] = []
+
     func streamChatCompletion(
         apiKey: String,
         modelID: String,
-        messages: [OutgoingChatMessage]
+        messages: [OutgoingChatMessage],
+        settings: AdvancedChatSettings
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         receivedMessages.append(messages)
+        receivedSettings.append(settings)
         streamCallCount += 1
         let events = scriptedEvents
         let delay = delayBetweenEventsNanoseconds

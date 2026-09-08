@@ -33,6 +33,14 @@ final class ChatCoordinator {
     private let repository: ConversationRepository?
     private var activeTask: Task<Void, Never>?
     private var loadedConversationIDs: Set<UUID> = []
+    /// Cached context boundaries, keyed by conversation ID. The value
+    /// itself is `UUID?` (so the dictionary entry is `UUID??`) so that
+    /// "boundary explicitly cleared to full-history" (cached as
+    /// `.some(nil)`) is distinguishable from "never loaded from the
+    /// repository yet" (no entry at all) — a plain `[UUID: UUID]`
+    /// cannot represent that distinction, since assigning `nil` would
+    /// remove the entry instead of caching "no boundary."
+    private var contextBoundaries: [UUID: UUID?] = [:]
     /// Checkpoint the streaming assistant message to the repository
     /// every this many content-delta events, rather than on every single
     /// one, per the brief's "not on every token" guidance. A value of 1
@@ -90,12 +98,68 @@ final class ChatCoordinator {
         return previous != nextService && !messages(for: conversationID).isEmpty
     }
 
+    /// The message ID (if any) marking where this conversation's sent
+    /// context currently starts — see `setContextBoundary`'s doc
+    /// comment. `nil` means "full history."
+    func contextBoundaryMessageID(for conversationID: UUID) -> UUID? {
+        if let cachedEntry = contextBoundaries[conversationID] {
+            return cachedEntry
+        }
+        guard let repository else { return nil }
+        do {
+            let loaded = try repository.contextBoundaryMessageID(for: conversationID)
+            contextBoundaries[conversationID] = loaded
+            return loaded
+        } catch {
+            assertionFailure("Failed to load context boundary for \(conversationID): \(error)")
+            return nil
+        }
+    }
+
+    /// Sets a "start context here" boundary: messages at or after
+    /// `messageID` are still shown in full in the transcript (nothing
+    /// is deleted or hidden), but only those messages are sent as
+    /// context to the provider on future turns. Per the brief's
+    /// context-management requirement, this is always an explicit,
+    /// visible user action — never automatic truncation.
+    ///
+    /// Passing `nil` clears the boundary, restoring full history as
+    /// context.
+    func setContextBoundary(_ messageID: UUID?, in conversationID: UUID) {
+        // `updateValue(_:forKey:)` makes the intent unambiguous on a
+        // `[UUID: UUID?]` dictionary: it always sets the entry to
+        // `messageID` (even when `messageID` is `nil`), rather than
+        // relying on subscript-assignment's optional-promotion
+        // behavior to avoid accidentally *removing* the entry — which
+        // would defeat the point of caching "explicitly cleared" as
+        // distinct from "never loaded from the repository."
+        contextBoundaries.updateValue(messageID, forKey: conversationID)
+        guard let repository else { return }
+        do {
+            try repository.setContextBoundary(messageID, forConversation: conversationID)
+        } catch {
+            assertionFailure("Failed to persist context boundary for \(conversationID): \(error)")
+        }
+    }
+
+    /// An estimate (never authoritative — see `ContextUsageEstimate`)
+    /// of how much of `model`'s context window the *next* send would
+    /// use, given the current transcript and context boundary.
+    func contextUsageEstimate(for conversationID: UUID, model: ModelInfo) -> ContextUsageEstimate {
+        ContextUsageEstimate.estimate(for: eligibleOutgoingMessages(for: conversationID), contextLength: model.contextLength)
+    }
+
     /// Sends `text` as a new user turn in `conversationID` using `model`.
     /// No-ops if a generation is already active anywhere in the app, or
     /// if `text` is empty after trimming — callers should disable Send in
     /// those cases, but this guards against a duplicate/racy invocation
     /// regardless.
-    func send(text: String, in conversationID: UUID, using model: ModelInfo) {
+    ///
+    /// `settings` is narrowed to what actually applies to `model` via
+    /// `AdvancedChatSettings.applicable(to:)` before being sent — see
+    /// that method's doc comment for why unknown capability support is
+    /// treated as unsupported for this purpose.
+    func send(text: String, in conversationID: UUID, using model: ModelInfo, settings: AdvancedChatSettings = AdvancedChatSettings()) {
         guard generationState == .idle else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -111,6 +175,7 @@ final class ChatCoordinator {
         let outgoing = eligibleOutgoingMessages(for: conversationID) + [
             OutgoingChatMessage(role: .user, content: trimmed)
         ]
+        let applicableSettings = settings.applicable(to: model)
 
         appendAndPersist(userMessage, in: conversationID)
         appendAndPersist(assistantMessage, in: conversationID)
@@ -134,7 +199,8 @@ final class ChatCoordinator {
                 model: model,
                 conversationID: conversationID,
                 assistantMessageID: assistantMessageID,
-                outgoing: outgoing
+                outgoing: outgoing,
+                settings: applicableSettings
             )
         }
     }
@@ -153,7 +219,7 @@ final class ChatCoordinator {
     /// is the matching user turn, does not duplicate it) before calling
     /// `send` again — from both the in-memory transcript and the
     /// repository.
-    func retryLastTurn(in conversationID: UUID, using model: ModelInfo) {
+    func retryLastTurn(in conversationID: UUID, using model: ModelInfo, settings: AdvancedChatSettings = AdvancedChatSettings()) {
         guard generationState == .idle else { return }
         var messages = self.messages(for: conversationID)
         guard let lastAssistant = messages.last, lastAssistant.role == .assistant else { return }
@@ -166,13 +232,23 @@ final class ChatCoordinator {
         deleteAndPersist(lastUser.id, in: conversationID)
         transcripts[conversationID] = messages
 
-        send(text: lastUser.content, in: conversationID, using: model)
+        send(text: lastUser.content, in: conversationID, using: model, settings: settings)
     }
 
     // MARK: - Private
 
+    /// Messages eligible to be sent as context for the next turn: all
+    /// context-eligible messages (per `TranscriptMessage.isEligibleForContext`),
+    /// further restricted to those at or after this conversation's
+    /// context boundary, if one is set — see `setContextBoundary`.
     private func eligibleOutgoingMessages(for conversationID: UUID) -> [OutgoingChatMessage] {
-        messages(for: conversationID)
+        let all = messages(for: conversationID)
+        let fromBoundary: [TranscriptMessage] = {
+            guard let boundaryID = contextBoundaryMessageID(for: conversationID) else { return all }
+            guard let boundaryIndex = all.firstIndex(where: { $0.id == boundaryID }) else { return all }
+            return Array(all[boundaryIndex...])
+        }()
+        return fromBoundary
             .filter(\.isEligibleForContext)
             .map { OutgoingChatMessage(role: $0.role, content: $0.content) }
     }
@@ -183,13 +259,14 @@ final class ChatCoordinator {
         model: ModelInfo,
         conversationID: UUID,
         assistantMessageID: UUID,
-        outgoing: [OutgoingChatMessage]
+        outgoing: [OutgoingChatMessage],
+        settings: AdvancedChatSettings
     ) async {
         generationState = .streaming(conversationID: conversationID)
         var deltasSinceCheckpoint = 0
 
         do {
-            let stream = client.streamChatCompletion(apiKey: apiKey, modelID: model.modelID, messages: outgoing)
+            let stream = client.streamChatCompletion(apiKey: apiKey, modelID: model.modelID, messages: outgoing, settings: settings)
             for try await event in stream {
                 if Task.isCancelled { break }
                 if case .contentDelta = event {

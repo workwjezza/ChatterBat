@@ -10,6 +10,9 @@ struct SidebarView: View {
     var viewModel: AppViewModel
     @State private var renamingConversation: Conversation?
     @State private var renameText = ""
+    @State private var exportingConversation: Conversation?
+    @State private var isImportPresented = false
+    @State private var isErrorAlertPresented = false
 
     var body: some View {
         List(selection: Binding(
@@ -38,6 +41,9 @@ struct SidebarView: View {
                                 renamingConversation = conversation
                                 renameText = conversation.title
                             }
+                            Button("Export…") {
+                                exportingConversation = conversation
+                            }
                             Button("Delete", role: .destructive) {
                                 viewModel.delete(conversation)
                             }
@@ -62,6 +68,54 @@ struct SidebarView: View {
                 .accessibilityLabel("New Chat")
                 .accessibilityHint("Starts a new conversation")
             }
+            ToolbarItem {
+                Button {
+                    isImportPresented = true
+                } label: {
+                    Label("Import Conversation…", systemImage: "square.and.arrow.down")
+                }
+                .help("Import a conversation exported from ChatterBat")
+                .accessibilityLabel("Import Conversation")
+            }
+        }
+        .fileExporter(
+            isPresented: Binding(
+                get: { exportingConversation != nil },
+                set: { if !$0 { exportingConversation = nil } }
+            ),
+            document: exportingConversation.flatMap { viewModel.exportData(for: $0) }.map(ConversationExportDocument.init),
+            contentType: .json,
+            defaultFilename: exportingConversation.map { "\($0.title).chatterbat" }
+        ) { result in
+            if case .failure = result {
+                isErrorAlertPresented = true
+            }
+            exportingConversation = nil
+        }
+        .fileImporter(
+            isPresented: $isImportPresented,
+            allowedContentTypes: [.json]
+        ) { result in
+            switch result {
+            case .success(let url):
+                guard let data = try? Data(contentsOf: url) else {
+                    isErrorAlertPresented = true
+                    return
+                }
+                if !viewModel.importConversation(from: data) {
+                    isErrorAlertPresented = true
+                }
+            case .failure:
+                isErrorAlertPresented = true
+            }
+        }
+        .alert(
+            "Import Failed",
+            isPresented: $isErrorAlertPresented
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(viewModel.lastExportImportError?.userMessage ?? "Something went wrong with this file.")
         }
         .alert("Rename Conversation", isPresented: Binding(
             get: { renamingConversation != nil },

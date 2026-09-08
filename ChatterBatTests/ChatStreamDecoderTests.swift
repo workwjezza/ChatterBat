@@ -55,4 +55,30 @@ final class ChatStreamDecoderTests: XCTestCase {
         let payload = #"{"error":{"code":"x"},"choices":[{"finish_reason":"error"}]}"#
         XCTAssertEqual(ChatStreamDecoder.decode(payload), .streamError("The provider reported a stream error."))
     }
+
+    func testVeniceCostUSDIsExtractedAlongsideUsage() {
+        let payload = #"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15},"cost":{"usd":0.00042,"diem":0}}"#
+        XCTAssertEqual(
+            ChatStreamDecoder.decode(payload),
+            .usage(ChatUsage(promptTokens: 10, completionTokens: 5, totalTokens: 15, costUSD: Decimal(string: "0.00042"), costCredits: nil))
+        )
+    }
+
+    func testOpenRouterCostCreditsIsExtractedAlongsideUsageAndNeverTreatedAsUSD() {
+        let payload = #"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"cost":0.95}}"#
+        let decoded = ChatStreamDecoder.decode(payload)
+        XCTAssertEqual(
+            decoded,
+            .usage(ChatUsage(promptTokens: 10, completionTokens: 5, totalTokens: 15, costUSD: nil, costCredits: Decimal(string: "0.95")))
+        )
+        guard case .usage(let usage) = decoded else { return XCTFail("Expected .usage") }
+        XCTAssertNil(usage.costUSD)
+    }
+
+    func testMissingCostFieldsLeaveBothCostFieldsNil() {
+        let payload = #"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#
+        guard case .usage(let usage) = ChatStreamDecoder.decode(payload) else { return XCTFail("Expected .usage") }
+        XCTAssertNil(usage.costUSD)
+        XCTAssertNil(usage.costCredits)
+    }
 }

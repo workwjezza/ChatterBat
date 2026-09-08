@@ -120,7 +120,8 @@ private struct PreviewOnlyChatClient: ChatStreamingClient {
     func streamChatCompletion(
         apiKey: String,
         modelID: String,
-        messages: [OutgoingChatMessage]
+        messages: [OutgoingChatMessage],
+        settings: AdvancedChatSettings
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         AsyncThrowingStream { $0.finish() }
     }
@@ -137,6 +138,8 @@ private final class PreviewOnlyRepository: ConversationRepository {
     func updateMessage(_ message: TranscriptMessage, inConversation conversationID: UUID) throws {}
     func deleteMessage(_ messageID: UUID, fromConversation conversationID: UUID) throws {}
     func interruptAllStreamingMessages() throws {}
+    func contextBoundaryMessageID(for conversationID: UUID) throws -> UUID? { nil }
+    func setContextBoundary(_ messageID: UUID?, forConversation conversationID: UUID) throws {}
 }
 
 private final class PreviewOnlyOnboardingStore: OnboardingStateStore {

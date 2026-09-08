@@ -11,8 +11,24 @@ protocol ChatStreamingClient: Sendable {
     func streamChatCompletion(
         apiKey: String,
         modelID: String,
-        messages: [OutgoingChatMessage]
+        messages: [OutgoingChatMessage],
+        settings: AdvancedChatSettings
     ) -> AsyncThrowingStream<ChatStreamEvent, Error>
+}
+
+extension ChatStreamingClient {
+    /// Convenience overload for call sites (and Stage 0–5 tests) that
+    /// don't need to pass advanced settings — defaults to the all-no-op
+    /// `AdvancedChatSettings()`, which never changes the resulting
+    /// request body. Added in Stage 6 so no pre-existing call site had
+    /// to be touched.
+    func streamChatCompletion(
+        apiKey: String,
+        modelID: String,
+        messages: [OutgoingChatMessage]
+    ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        streamChatCompletion(apiKey: apiKey, modelID: modelID, messages: messages, settings: AdvancedChatSettings())
+    }
 }
 
 /// Shared implementation for the OpenAI-compatible SSE chat streaming
@@ -34,12 +50,13 @@ struct StandardChatStreamingClient: ChatStreamingClient {
     func streamChatCompletion(
         apiKey: String,
         modelID: String,
-        messages: [OutgoingChatMessage]
+        messages: [OutgoingChatMessage],
+        settings: AdvancedChatSettings
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await run(apiKey: apiKey, modelID: modelID, messages: messages, continuation: continuation)
+                    try await run(apiKey: apiKey, modelID: modelID, messages: messages, settings: settings, continuation: continuation)
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -55,13 +72,19 @@ struct StandardChatStreamingClient: ChatStreamingClient {
         apiKey: String,
         modelID: String,
         messages: [OutgoingChatMessage],
+        settings: AdvancedChatSettings,
         continuation: AsyncThrowingStream<ChatStreamEvent, Error>.Continuation
     ) async throws {
         var request = URLRequest(url: endpointURL)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try ChatRequestBuilder.requestData(modelID: modelID, messages: messages)
+        request.httpBody = try ChatRequestBuilder.requestData(
+            modelID: modelID,
+            messages: messages,
+            service: service,
+            settings: settings
+        )
 
         let response: HTTPURLResponse
         let byteStream: AsyncThrowingStream<Data, Error>

@@ -185,12 +185,46 @@ VoiceOver/keyboard-only navigation are implemented and, where the logic
 is decidable, unit-tested, but not eyeballed or screen-reader-tested.
 Long-transcript scrolling performance was not specifically profiled.
 
-## Next stage: Stage 6 — Enhanced chat controls
+## Stage 6 summary (complete)
 
-Implement capability-aware reasoning settings, a deliberately small set
-of OpenRouter routing controls, supported Venice advanced settings,
-usage/cost display with explicit unit handling, context management, and
-versioned JSON conversation export/import. Advanced controls must stay
-hidden by default and must never silently weaken privacy guarantees on
-error. See the original brief §10 (Usage, cost, reasoning, and context)
-and §11 Stage 6 for acceptance criteria.
+`AdvancedChatSettings` (+ `ReasoningEffort`/`VeniceAdvancedSettings`/
+`OpenRouterRoutingPreferences`) adds capability-aware reasoning
+settings and a deliberately small set of Venice/OpenRouter advanced
+controls — every field defaults to a no-op value, and
+`applicable(to:)` strips anything that doesn't apply to the selected
+model (treating `.unknown` reasoning support the same as
+`.unsupported` for request-safety, though it displays differently).
+`ChatRequestBuilder`/`ChatStreamingClient` thread `service`/`settings`
+through to the request body via a backward-compatible protocol
+extension. `ChatUsage` gained `costUSD`/`costCredits` as two distinct,
+never-conflated fields (Venice reports real USD; OpenRouter's `cost`
+is documented only as "credits," with no confirmed USD exchange
+rate). `ChatCoordinator` adds context management
+(`setContextBoundary`/`contextBoundaryMessageID`/`contextUsageEstimate`)
+— a per-message, explicit, non-destructive "start context here"
+marker persisted via a new plain, additive `PersistedConversation`
+column — and a versioned JSON export/import format
+(`ConversationExport`/`ConversationExportCoding`) wired into
+`SidebarView`, which always imports as a brand-new conversation and
+never carries any key/account-identifier field. 190/190 unit tests
+pass (52 new). This completes Stage 6.
+
+Known gaps carried into Stage 7, both explicitly documented in
+`docs/STATUS.md` limitations 17–19: none of Stage 6's new UI (advanced
+settings popover, context-boundary context menu, export/import file
+panels) was interactively exercised in this environment (no
+Accessibility permission for UI automation); the new
+`contextBoundaryMessageID` column has only been tested against
+freshly-created stores, not a real pre-Stage-6 store with existing
+data; OpenRouter's richer provider-routing fields (`order`/`only`/
+`ignore`/`quantizations`/`sort`/`max_price`) remain unexposed pending a
+provider-catalog fetcher that doesn't exist yet.
+
+## Next stage: Stage 7 — Permission-controlled agent beta
+
+Implement a read-only, tool-using agent beta as an explicitly
+separate, optional mode from the chat-first product — every tool
+invocation must be visible and individually approvable by the user
+before it runs, never auto-approved, and never silently expanding
+scope beyond what's shown. See the original brief §11 Stage 7 and its
+permission-model requirements for acceptance criteria before starting.

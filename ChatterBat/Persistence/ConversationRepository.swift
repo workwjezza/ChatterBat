@@ -50,4 +50,15 @@ protocol ConversationRepository: AnyObject {
     /// messages, so a message that was mid-stream when the app last quit
     /// is never displayed as if still live nor silently resumed.
     func interruptAllStreamingMessages() throws
+
+    /// The message ID (if any) marking where this conversation's
+    /// *sent* context should start — see `Conversation.contextBoundaryMessageID`'s
+    /// doc comment. `nil` means "use full history," the default.
+    func contextBoundaryMessageID(for conversationID: UUID) throws -> UUID?
+
+    /// Sets (or, when `messageID` is `nil`, clears) the context
+    /// boundary for a conversation. Never deletes or hides any
+    /// message — this only affects what's included as context in
+    /// *future* sends.
+    func setContextBoundary(_ messageID: UUID?, forConversation conversationID: UUID) throws
 }

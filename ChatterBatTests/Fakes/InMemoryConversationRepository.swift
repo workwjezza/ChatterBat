@@ -72,6 +72,16 @@ final class InMemoryConversationRepository: ConversationRepository {
         }
     }
 
+    private(set) var contextBoundaries: [UUID: UUID] = [:]
+
+    func contextBoundaryMessageID(for conversationID: UUID) throws -> UUID? {
+        contextBoundaries[conversationID]
+    }
+
+    func setContextBoundary(_ messageID: UUID?, forConversation conversationID: UUID) throws {
+        contextBoundaries[conversationID] = messageID
+    }
+
     private func touchConversation(_ conversationID: UUID, preview: String) {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         conversations[index].updatedAt = .now

@@ -104,6 +104,16 @@ final class SwiftDataConversationRepository: ConversationRepository {
         try context.save()
     }
 
+    func contextBoundaryMessageID(for conversationID: UUID) throws -> UUID? {
+        try fetchConversation(id: conversationID)?.contextBoundaryMessageID
+    }
+
+    func setContextBoundary(_ messageID: UUID?, forConversation conversationID: UUID) throws {
+        guard let persisted = try fetchConversation(id: conversationID) else { return }
+        persisted.contextBoundaryMessageID = messageID
+        try context.save()
+    }
+
     // MARK: - Private
 
     private func fetchConversation(id: UUID) throws -> PersistedConversation? {
