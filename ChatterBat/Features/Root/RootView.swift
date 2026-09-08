@@ -121,7 +121,8 @@ private struct PreviewOnlyChatClient: ChatStreamingClient {
         apiKey: String,
         modelID: String,
         messages: [OutgoingChatMessage],
-        settings: AdvancedChatSettings
+        settings: AdvancedChatSettings,
+        tools: [AgentTool]
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         AsyncThrowingStream { $0.finish() }
     }

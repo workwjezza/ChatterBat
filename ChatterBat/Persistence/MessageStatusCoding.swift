@@ -13,6 +13,8 @@ enum MessageStatusCoding {
         case .cancelled: return "cancelled"
         case .failed: return "failed"
         case .interrupted: return "interrupted"
+        case .awaitingApproval: return "awaitingApproval"
+        case .toolDenied: return "toolDenied"
         }
     }
 
@@ -33,6 +35,8 @@ enum MessageStatusCoding {
         case "cancelled": return .cancelled
         case "failed": return .failed(failureMessage ?? "Unknown error.")
         case "interrupted": return .interrupted
+        case "awaitingApproval": return .awaitingApproval
+        case "toolDenied": return .toolDenied
         default: return .interrupted
         }
     }

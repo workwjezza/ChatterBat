@@ -23,7 +23,7 @@ struct MessageBubble: View {
             }
 
             HStack(spacing: 6) {
-                Text(message.role == .user ? "You" : "Assistant")
+                Text(roleLabel)
                     .font(.caption.bold())
                     .foregroundStyle(.secondary)
                 if let attribution = message.attribution {
@@ -46,7 +46,9 @@ struct MessageBubble: View {
                 }
             }
 
-            if message.content.isEmpty && message.status == .streaming {
+            if let toolInvocation = message.toolInvocation {
+                toolInvocationBody(toolInvocation)
+            } else if message.content.isEmpty && message.status == .streaming {
                 Text("…")
                     .foregroundStyle(.secondary)
             } else {
@@ -70,6 +72,15 @@ struct MessageBubble: View {
         .accessibilityLabel(accessibilityDescription)
     }
 
+    private var roleLabel: String {
+        switch message.role {
+        case .user: return "You"
+        case .assistant: return "Assistant"
+        case .tool: return "Tool"
+        case .system: return "System"
+        }
+    }
+
     @ViewBuilder
     private var statusBadge: some View {
         switch message.status {
@@ -81,6 +92,31 @@ struct MessageBubble: View {
             Text("Stopped").font(.caption2).foregroundStyle(.orange)
         case .failed(let reason):
             Text(reason).font(.caption2).foregroundStyle(.red)
+        case .awaitingApproval:
+            Text("Awaiting approval").font(.caption2).foregroundStyle(.blue)
+        case .toolDenied:
+            Text("Denied").font(.caption2).foregroundStyle(.orange)
+        }
+    }
+
+    /// Renders a `.tool`-role message's permanent record: which tool,
+    /// the model's stated reason, and — once decided — what was
+    /// approved/read or the denial/failure reason. Never shows a full
+    /// filesystem path, only the item name `AgentToolExecutor` already
+    /// restricted itself to.
+    private func toolInvocationBody(_ invocation: ToolInvocationRecord) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(invocation.tool.displayName) — \(invocation.modelStatedReason)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let itemName = invocation.approvedItemName {
+                Text("Approved: \(itemName)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if !message.content.isEmpty && message.status != .awaitingApproval {
+                MessageContentView(content: message.content)
+            }
         }
     }
 
@@ -114,8 +150,19 @@ struct MessageBubble: View {
     }
 
     private var accessibilityDescription: String {
-        let speaker = message.role == .user ? "You" : "Assistant"
-        var description = "\(speaker): \(message.content)"
+        if let toolInvocation = message.toolInvocation {
+            var description = "Tool: \(toolInvocation.tool.displayName). Reason: \(toolInvocation.modelStatedReason)"
+            switch message.status {
+            case .awaitingApproval:
+                description += ". Awaiting your approval."
+            case .toolDenied:
+                description += ". Denied: \(message.content)"
+            default:
+                if !message.content.isEmpty { description += ". Result: \(message.content)" }
+            }
+            return description
+        }
+        var description = "\(roleLabel): \(message.content)"
         if case .failed(let reason) = message.status {
             description += ". Failed: \(reason)"
         } else if message.status == .cancelled {

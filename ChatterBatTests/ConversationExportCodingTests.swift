@@ -95,6 +95,44 @@ final class ConversationExportCodingTests: XCTestCase {
         XCTAssertEqual(messages.first?.status, .failed("Rate limited."))
     }
 
+    // MARK: - Stage 7: tool invocation export/import
+
+    func testToolInvocationRecordRoundTripsThroughExportImport() throws {
+        let conversation = Conversation(title: "Tools")
+        let toolMessage = TranscriptMessage(
+            role: .tool,
+            content: "file contents",
+            status: .completed,
+            toolInvocation: ToolInvocationRecord(
+                tool: .listDirectory,
+                toolCallID: "call_9",
+                modelStatedReason: "checking the folder",
+                approvedItemName: "Documents"
+            )
+        )
+        let export = ConversationExportCoding.export(conversation: conversation, messages: [toolMessage])
+        let data = try ConversationExportCoding.encode(export)
+        let decoded = try ConversationExportCoding.decode(data)
+
+        let (_, messages) = ConversationExportCoding.importAsNewConversation(decoded)
+
+        XCTAssertEqual(messages.first?.role, .tool)
+        XCTAssertEqual(messages.first?.status, .completed)
+        XCTAssertEqual(messages.first?.toolInvocation?.tool, .listDirectory)
+        XCTAssertEqual(messages.first?.toolInvocation?.toolCallID, "call_9")
+        XCTAssertEqual(messages.first?.toolInvocation?.modelStatedReason, "checking the folder")
+        XCTAssertEqual(messages.first?.toolInvocation?.approvedItemName, "Documents")
+    }
+
+    func testOrdinaryMessageNeverGainsAToolInvocationAfterExportImport() {
+        let conversation = Conversation(title: "Original")
+        let export = ConversationExportCoding.export(conversation: conversation, messages: makeMessages())
+
+        let (_, messages) = ConversationExportCoding.importAsNewConversation(export)
+
+        XCTAssertTrue(messages.allSatisfy { $0.toolInvocation == nil })
+    }
+
     func testExportNeverIncludesAnyKeyLikeField() throws {
         // Defensive: the encoded JSON must never contain anything that
         // looks like an API key field name, since export/import must

@@ -25,7 +25,11 @@ enum ConversationExportCoding {
                     attributionModelID: message.attribution?.modelID,
                     promptTokens: message.usage?.promptTokens,
                     completionTokens: message.usage?.completionTokens,
-                    totalTokens: message.usage?.totalTokens
+                    totalTokens: message.usage?.totalTokens,
+                    toolName: message.toolInvocation?.tool.rawValue,
+                    toolCallID: message.toolInvocation?.toolCallID,
+                    toolModelStatedReason: message.toolInvocation?.modelStatedReason,
+                    toolApprovedItemName: message.toolInvocation?.approvedItemName
                 )
             }
         )
@@ -127,12 +131,26 @@ enum ConversationExportCoding {
                     totalTokens: exported.totalTokens
                 )
             }()
+            let toolInvocation: ToolInvocationRecord? = {
+                guard
+                    let toolName = exported.toolName,
+                    let tool = AgentTool(rawValue: toolName),
+                    let toolCallID = exported.toolCallID
+                else { return nil }
+                return ToolInvocationRecord(
+                    tool: tool,
+                    toolCallID: toolCallID,
+                    modelStatedReason: exported.toolModelStatedReason ?? "",
+                    approvedItemName: exported.toolApprovedItemName
+                )
+            }()
             return TranscriptMessage(
                 role: ChatRole(rawValue: exported.role) ?? .user,
                 content: exported.content,
                 status: MessageStatusCoding.status(fromRaw: exported.status, failureMessage: exported.failureMessage),
                 attribution: attribution,
-                usage: usage
+                usage: usage,
+                toolInvocation: toolInvocation
             )
         }
         return (conversation, messages)

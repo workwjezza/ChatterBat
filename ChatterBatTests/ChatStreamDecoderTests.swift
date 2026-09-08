@@ -81,4 +81,36 @@ final class ChatStreamDecoderTests: XCTestCase {
         XCTAssertNil(usage.costUSD)
         XCTAssertNil(usage.costCredits)
     }
+
+    // MARK: - Stage 7: tool call deltas
+
+    func testFirstToolCallChunkExtractsIdNameAndArgumentsFragment() {
+        let payload = #"""
+        {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"rea"}}]},"finish_reason":null}]}
+        """#
+        XCTAssertEqual(
+            ChatStreamDecoder.decode(payload),
+            .toolCallDelta(index: 0, id: "call_1", name: "read_file", argumentsFragment: "{\"rea")
+        )
+    }
+
+    func testSubsequentToolCallChunkOmitsIdAndNameButCarriesArgumentsFragment() {
+        let payload = #"""
+        {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"son\": \"x\"}"}}]},"finish_reason":null}]}
+        """#
+        XCTAssertEqual(
+            ChatStreamDecoder.decode(payload),
+            .toolCallDelta(index: 0, id: nil, name: nil, argumentsFragment: "son\": \"x\"}")
+        )
+    }
+
+    func testToolCallDeltaTakesPrecedenceOverFinishReasonInSameChunk() {
+        let payload = #"""
+        {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"list_directory","arguments":""}}]},"finish_reason":"tool_calls"}]}
+        """#
+        XCTAssertEqual(
+            ChatStreamDecoder.decode(payload),
+            .toolCallDelta(index: 0, id: "call_1", name: "list_directory", argumentsFragment: "")
+        )
+    }
 }

@@ -32,13 +32,27 @@ extension SwiftDataConversationRepository {
                 totalTokens: persisted.totalTokens
             )
         }()
+        let toolInvocation: ToolInvocationRecord? = {
+            guard
+                let toolRaw = persisted.toolRaw,
+                let tool = AgentTool(rawValue: toolRaw),
+                let toolCallID = persisted.toolCallID
+            else { return nil }
+            return ToolInvocationRecord(
+                tool: tool,
+                toolCallID: toolCallID,
+                modelStatedReason: persisted.toolModelStatedReason ?? "",
+                approvedItemName: persisted.toolApprovedItemName
+            )
+        }()
         return TranscriptMessage(
             id: persisted.id,
             role: ChatRole(rawValue: persisted.roleRaw) ?? .user,
             content: persisted.content,
             status: MessageStatusCoding.status(fromRaw: persisted.statusRaw, failureMessage: persisted.failureMessage),
             attribution: attribution,
-            usage: usage
+            usage: usage,
+            toolInvocation: toolInvocation
         )
     }
 
@@ -56,7 +70,11 @@ extension SwiftDataConversationRepository {
             completionTokens: message.usage?.completionTokens,
             totalTokens: message.usage?.totalTokens,
             sortIndex: sortIndex,
-            createdAt: .now
+            createdAt: .now,
+            toolRaw: message.toolInvocation?.tool.rawValue,
+            toolCallID: message.toolInvocation?.toolCallID,
+            toolModelStatedReason: message.toolInvocation?.modelStatedReason,
+            toolApprovedItemName: message.toolInvocation?.approvedItemName
         )
     }
 
@@ -67,5 +85,6 @@ extension SwiftDataConversationRepository {
         persisted.promptTokens = message.usage?.promptTokens
         persisted.completionTokens = message.usage?.completionTokens
         persisted.totalTokens = message.usage?.totalTokens
+        persisted.toolApprovedItemName = message.toolInvocation?.approvedItemName
     }
 }

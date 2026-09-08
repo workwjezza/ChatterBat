@@ -33,6 +33,16 @@ final class PersistedMessage {
     /// sort key.
     var sortIndex: Int
     var createdAt: Date
+    /// Stage 7: non-`nil` only for `.tool`-role messages — see
+    /// `ToolInvocationRecord`. Added as plain, additive optional
+    /// columns (never a nested/`@Relationship` type), matching this
+    /// project's established SwiftData posture — see
+    /// `PersistedConversation.contextBoundaryMessageID`'s doc comment
+    /// for why this project always does it this way on this toolchain.
+    var toolRaw: String?
+    var toolCallID: String?
+    var toolModelStatedReason: String?
+    var toolApprovedItemName: String?
 
     init(
         id: UUID,
@@ -47,7 +57,11 @@ final class PersistedMessage {
         completionTokens: Int?,
         totalTokens: Int?,
         sortIndex: Int,
-        createdAt: Date
+        createdAt: Date,
+        toolRaw: String? = nil,
+        toolCallID: String? = nil,
+        toolModelStatedReason: String? = nil,
+        toolApprovedItemName: String? = nil
     ) {
         self.id = id
         self.conversationID = conversationID
@@ -62,5 +76,9 @@ final class PersistedMessage {
         self.totalTokens = totalTokens
         self.sortIndex = sortIndex
         self.createdAt = createdAt
+        self.toolRaw = toolRaw
+        self.toolCallID = toolCallID
+        self.toolModelStatedReason = toolModelStatedReason
+        self.toolApprovedItemName = toolApprovedItemName
     }
 }

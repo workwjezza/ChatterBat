@@ -20,16 +20,29 @@ enum ChatRequestBuilder {
         modelID: String,
         messages: [OutgoingChatMessage],
         service: AIService,
-        settings: AdvancedChatSettings = AdvancedChatSettings()
+        settings: AdvancedChatSettings = AdvancedChatSettings(),
+        tools: [AgentTool] = []
     ) -> [String: Any] {
         var body: [String: Any] = [
             "model": modelID,
-            "messages": messages.map { message in
-                ["role": message.role.rawValue, "content": message.content]
-            },
+            "messages": messages.map(Self.encode),
             "stream": true,
             "stream_options": ["include_usage": true]
         ]
+
+        // Stage 7: `tools` defaults to `[]`, which omits the field
+        // entirely — never sends an empty `tools: []` array, matching
+        // "no tools requested" exactly as no field at all. When tools
+        // *are* present, `parallel_tool_calls: false` is always sent
+        // alongside them: `ChatCoordinator` only ever approves one
+        // tool call at a time, and this keeps that a documented,
+        // provider-enforced guarantee rather than an assumption about
+        // model behavior — see `ChatStreamEvent`'s doc comment on
+        // `toolCallDelta`.
+        if !tools.isEmpty {
+            body["tools"] = tools.map { $0.requestDefinition() }
+            body["parallel_tool_calls"] = false
+        }
 
         if let effort = settings.reasoningEffort {
             body["reasoning_effort"] = effort.rawValue
@@ -71,10 +84,35 @@ enum ChatRequestBuilder {
         modelID: String,
         messages: [OutgoingChatMessage],
         service: AIService,
-        settings: AdvancedChatSettings = AdvancedChatSettings()
+        settings: AdvancedChatSettings = AdvancedChatSettings(),
+        tools: [AgentTool] = []
     ) throws -> Data {
         try JSONSerialization.data(
-            withJSONObject: body(modelID: modelID, messages: messages, service: service, settings: settings)
+            withJSONObject: body(modelID: modelID, messages: messages, service: service, settings: settings, tools: tools)
         )
+    }
+
+    /// Encodes one `OutgoingChatMessage` into the exact OpenAI-compatible
+    /// per-message JSON shape both providers document: plain
+    /// `{"role", "content"}` for ordinary messages; an assistant
+    /// message replaying a prior tool request additionally carries
+    /// `tool_calls: [{"id", "type": "function", "function": {"name",
+    /// "arguments"}}]`; a `.tool` message (the result being fed back)
+    /// additionally carries `tool_call_id`.
+    private static func encode(_ message: OutgoingChatMessage) -> [String: Any] {
+        var encoded: [String: Any] = ["role": message.role.rawValue, "content": message.content]
+        if !message.toolCalls.isEmpty {
+            encoded["tool_calls"] = message.toolCalls.map { call in
+                [
+                    "id": call.id,
+                    "type": "function",
+                    "function": ["name": call.name, "arguments": call.argumentsJSON]
+                ]
+            }
+        }
+        if let toolCallID = message.toolCallID {
+            encoded["tool_call_id"] = toolCallID
+        }
+        return encoded
     }
 }

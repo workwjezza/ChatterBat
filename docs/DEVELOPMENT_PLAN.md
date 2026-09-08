@@ -220,11 +220,42 @@ data; OpenRouter's richer provider-routing fields (`order`/`only`/
 `ignore`/`quantizations`/`sort`/`max_price`) remain unexposed pending a
 provider-catalog fetcher that doesn't exist yet.
 
-## Next stage: Stage 7 — Permission-controlled agent beta
+## Stage 7 summary (complete)
 
-Implement a read-only, tool-using agent beta as an explicitly
-separate, optional mode from the chat-first product — every tool
-invocation must be visible and individually approvable by the user
-before it runs, never auto-approved, and never silently expanding
-scope beyond what's shown. See the original brief §11 Stage 7 and its
-permission-model requirements for acceptance criteria before starting.
+`AgentTool` (`read_file`, `list_directory`) — two read-only tools
+whose JSON Schema parameters accept only a `reason` string, never a
+path; the actual file/folder is always chosen live by the user via a
+native `NSOpenPanel` (`AgentToolPanelPresenter`), never named by the
+model. `ChatStreamEvent.toolCallDelta`/`ChatStreamDecoder` decode the
+OpenAI-compatible streaming tool-call fragment shape both Venice and
+OpenRouter document; `ChatRequestBuilder` encodes the full
+`tools`/assistant-`tool_calls`/`tool`-role round trip and always sends
+`parallel_tool_calls: false` whenever any tool is offered.
+`ChatCoordinator` gains a new `GenerationState.awaitingToolApproval`:
+every tool call pauses generation, appends a permanent, visible
+`.tool`-role `TranscriptMessage`, and requires an explicit
+`respondToToolApproval(in:approve:)` call before `AgentToolExecutor`
+ever touches the filesystem — approving, denying, a cancelled panel,
+a read failure, and an unrecognized tool name are all recorded
+permanently and fed back to the model as a real follow-up request.
+`.tool` messages are persisted (new additive `PersistedMessage`
+columns) and exportable, but always excluded from future-turn
+context. UI: `AgentToolApprovalView` (a `.sheet` shown for every
+single request) and an "Agent Tools (Beta)" toggle inside the
+existing `AdvancedSettingsView` popover, off by default. The app
+entitlements gained `com.apple.security.files.user-selected.read-only`.
+227/227 unit tests pass (37 new). This completes Stage 7.
+
+Known gaps carried into Stage 8, both explicitly documented in
+`docs/STATUS.md` limitations 20–21: none of Stage 7's new UI (the
+approval sheet, the beta toggle, the native panel's actual on-screen
+behavior) was interactively exercised in this environment (no
+Accessibility permission for UI automation), and no live round trip
+against a real tool-calling-capable Venice/OpenRouter model was
+performed (automated tests never call paid APIs).
+
+## Next stage: Stage 8 — Hardening and distribution
+
+See this file's stage table above and the original brief for Stage
+8's acceptance criteria before starting; per this project's
+established rule, do not implement multiple stages in one pass.

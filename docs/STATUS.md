@@ -2,7 +2,7 @@
 
 ## Last completed stage
 
-**Stage 6 — Enhanced chat controls.** Complete.
+**Stage 7 — Permission-controlled agent beta (read-only tools).** Complete.
 
 ## App icon
 
@@ -19,6 +19,97 @@ with it. The two original source PNGs were removed from the repo root
 after being baked into the asset catalog at the correct sizes — they
 were never referenced by any build setting, so deleting them changes
 nothing about the build.
+
+## Stage 7 — what's implemented
+
+- `AgentTool` (`read_file`, `list_directory`): a deliberately small,
+  read-only tool catalog. Each tool's JSON Schema parameters accept
+  only a `reason` string — never a path — so the model can request
+  *a kind of* access and explain why, but can never itself name a
+  filesystem location. Verified against current OpenAI-compatible
+  `tools`/`tool_choice`/streaming `delta.tool_calls` docs (OpenRouter's
+  tool-calling guide and streaming reference) and confirmed Venice's
+  chat completions schema accepts the same `tools`/`tool_choice`
+  fields and returns `tool_calls` in the same shape.
+- `ChatStreamEvent.toolCallDelta`/`ChatStreamDecoder`: decodes the
+  streaming `delta.tool_calls[0]` fragment shape (`id`/`name` present
+  only on the first chunk per call, `arguments` a fragment to
+  concatenate) — `ChatRequestBuilder` always sends
+  `parallel_tool_calls: false` whenever any tool is offered, so only
+  index 0 ever needs tracking (see docs/DECISIONS.md). `OutgoingChatMessage`
+  gained `toolCalls`/`toolCallID` (both default to empty/`nil`, so
+  every pre-Stage-7 call site compiles and behaves unchanged);
+  `ChatRequestBuilder` encodes the full assistant-`tool_calls`/`tool`-role
+  round trip in the exact OpenAI-compatible shape both providers
+  document. `ChatStreamingClient` gained a `tools:` parameter via the
+  same backward-compatible protocol-extension-overload pattern Stage 6
+  used for `settings:`.
+- `ChatCoordinator`: offers tools only when
+  `model.supportsTools == .supported` (`.unknown` treated as
+  unsupported for request-safety, same posture as Stage 6's
+  `AdvancedChatSettings.applicable(to:)`). On a tool-call request,
+  pauses generation in a new `GenerationState.awaitingToolApproval`
+  and appends a permanent, visible `.tool`-role `TranscriptMessage`
+  (`.awaitingApproval` status) — never runs anything before this.
+  `respondToToolApproval(in:approve:)` is the single place a decision
+  is made: approving calls `AgentToolExecutor`, which presents a real
+  `NSOpenPanel` (`AgentToolPanelPresenter`, injected so tests never pop
+  a real one) and reads only whatever the user actually picks there;
+  denying never touches the filesystem. Either outcome (plus a
+  cancelled panel, a read failure, or an unrecognized tool name) is
+  recorded permanently on the `.tool` message and fed back to the
+  model as a real follow-up request, so the model can respond
+  honestly rather than the turn dead-ending. `Stop`/Escape while
+  awaiting approval denies the pending call rather than being a dead
+  no-op. A defensive `maxToolCallsPerTurn` (4) stops *offering* tools
+  after that many rounds in one turn — explicitly documented as not
+  the actual safety mechanism, since every round already requires its
+  own approval regardless.
+- `.tool`-role messages are permanently persisted (new, plain
+  additive `PersistedMessage` columns: `toolRaw`, `toolCallID`,
+  `toolModelStatedReason`, `toolApprovedItemName` — same "plain
+  optional column, no `@Relationship`" posture as Stage 6's context
+  boundary) and included in conversation export/import
+  (`ConversationExport.ExportedMessage` gained the same four fields).
+  They are always excluded from `isEligibleForContext` — never
+  replayed as ordinary history on a later, unrelated turn; the
+  in-memory `ActiveToolContext` handles the one-shot round trip a
+  tool call itself needs. Two new `MessageStatus` cases:
+  `.awaitingApproval` (rewritten to `.interrupted` at next launch by
+  `interruptAllStreamingMessages`, exactly like an interrupted
+  `.streaming` message) and `.toolDenied` (a deliberate user choice,
+  never displayed as an error).
+- UI: `AgentToolApprovalView` — a `.sheet` shown for every single tool
+  request (tool name/description, the model's own stated reason,
+  Approve/Deny) — is the only path that can trigger
+  `AgentToolExecutor.run`. The "Agent Tools (Beta)" toggle lives inside
+  the existing `AdvancedSettingsView` popover (off by default, hidden
+  entirely for a model with `.unsupported`/`.unknown` tool support) —
+  deliberately not a prominent top-level control, per the brief's
+  "explicitly separate, optional mode" requirement.
+  `MessageBubble`/`TranscriptView` render `.tool` messages with their
+  own distinct body (tool name, model's reason, approved item name,
+  result) and status badges for `.awaitingApproval`/`.toolDenied`.
+- `ChatterBat.entitlements` gained
+  `com.apple.security.files.user-selected.read-only` — required for
+  the sandboxed app to actually read what the user picks via the new
+  panel; verified present in the signed, built app bundle via
+  `codesign -d --entitlements`.
+- 227/227 unit tests pass (37 new: `AgentToolTests` (4),
+  `AgentToolExecutorTests` (5, against real temp-directory fixtures,
+  never a real `NSOpenPanel`), `ChatCoordinatorAgentToolsTests` (9),
+  `SwiftDataConversationRepositoryAgentToolsTests` (4),
+  `TranscriptMessageAgentToolsTests` (5), plus 3 new
+  `ChatStreamDecoderTests` cases, 5 new `ChatRequestBuilderTests`
+  cases, and 2 new `ConversationExportCodingTests` cases; all Stage
+  0–6 suites still pass unchanged, 190 from before).
+
+Known gap, honestly documented: none of this stage's new UI (the
+approval sheet, the "Agent Tools (Beta)" toggle, the actual
+`NSOpenPanel` behavior when picking a file/folder) was interactively
+exercised in this environment — same `osascript`-lacks-Accessibility-
+permission limitation carried forward from Stage 6. See Known
+Limitations below.
 
 ## Stage 6 — what's implemented
 
@@ -660,6 +751,13 @@ the full suite 3 times consecutively after all fixes — 190/190 every
 time, 1.4–1.9s total, zero hangs, zero new crash reports in
 `~/Library/Logs/DiagnosticReports/`.
 
+Result (Stage 7, current): **TEST SUCCEEDED** — 227/227 tests passed
+(37 new — see the Stage 7 what's-implemented section above for the
+exact breakdown; all Stage 0–6 suites still pass unchanged, 190 from
+before). No regressions and no new fixes required — every new test
+passed on first run. Full main-target build (`xcodebuild ...
+build`) also succeeded with zero warnings.
+
 ## Manual verification performed
 
 - Stage 0: launched the built `.app` directly (`open .../ChatterBat.app`);
@@ -743,6 +841,18 @@ time, 1.4–1.9s total, zero hangs, zero new crash reports in
   right message, export a real conversation to a file, inspect the
   JSON, and re-import it to confirm it appears as a new, correct
   conversation.
+- Stage 7: rebuilt and launched the app after adding the agent-tools
+  approval sheet, the entitlement change, and the new
+  `PersistedMessage` columns — confirmed via `ps aux`/`pgrep` it starts
+  with no crash on a freshly-wiped store, then terminated it cleanly.
+  Verified via `codesign -d --entitlements :-` on the built,
+  ad-hoc-signed app bundle that
+  `com.apple.security.files.user-selected.read-only` is actually
+  present alongside the existing sandbox/network entitlements. Did
+  **not** interactively trigger a real tool call or click through the
+  approval sheet/native panel — same `osascript`-lacks-Accessibility
+  limitation as Stage 6; see Known Limitation 20 below for the
+  specific human action recommended.
 
 ## Known limitations
 
@@ -920,16 +1030,41 @@ time, 1.4–1.9s total, zero hangs, zero new crash reports in
     will need a way to fetch and display OpenRouter's provider-slug
     catalog first (there is currently no fetcher for it anywhere in
     the codebase).
+20. **No interactive walkthrough of Stage 7's new UI was possible** —
+    same `osascript`-lacks-Accessibility-permission limitation as
+    Stage 6. The approval sheet (`AgentToolApprovalView`), the "Agent
+    Tools (Beta)" toggle in `AdvancedSettingsView`, and the actual
+    on-screen `NSOpenPanel` behavior (its title/prompt text, whether
+    it correctly restricts to files vs. folders per tool) have not
+    been visually confirmed, only unit-tested at the logic layer
+    (`ChatCoordinator`'s approval state machine, `AgentToolExecutor`'s
+    file/directory reading against real temp-directory fixtures with
+    a scripted fake panel presenter). **Action for a human:** connect
+    a real Venice or OpenRouter account with a tool-calling-capable
+    model, turn on "Agent Tools (Beta)" in Advanced Settings, ask a
+    question that would plausibly prompt a tool call (e.g. "what's in
+    this file: <describe a real local file>"), confirm the approval
+    sheet shows the right tool/reason, approve it, confirm the native
+    panel appears and only reads the chosen file, and confirm denying
+    a request is honestly reflected in the transcript.
+21. **No live end-to-end round trip against a real Venice/OpenRouter
+    tool-calling-capable model was performed** — same "automated tests
+    never call paid APIs" constraint as every prior stage. The exact
+    request/response shapes were verified against current provider
+    documentation (OpenRouter's tool-calling guide and streaming
+    reference; Venice's chat completions schema) and exercised via
+    `FakeChatStreamingClient`-scripted events, but a real model's
+    actual behavior when offered these two specific tool
+    definitions — whether it reliably includes a `reason`, whether it
+    ever emits more than one function call despite
+    `parallel_tool_calls: false`, whether some models refuse to use
+    tools with no path argument at all — has not been observed.
 
 ## Next small task
 
-The chat-first MVP (Stages 0–5) plus Stage 6's enhanced chat controls
-are now complete per the brief's scope. Begin Stage 7: a
-permission-controlled, tool-using agent beta — explicitly scoped to
-read-only tools, with every tool invocation visible and individually
-approvable by the user before it runs, never auto-approved, and never
-silently expanding scope beyond what's shown. This is explicitly *not*
-part of the initial chat-first product and should be built as a
-clearly-separated, optional mode. See `docs/DEVELOPMENT_PLAN.md` and
-the original brief §11 (Stage 7) and its permission-model requirements
-before starting.
+Stages 0–7 are now complete per the brief's scope (chat-first MVP,
+enhanced chat controls, and the permission-controlled agent beta).
+Stage 8 — hardening and distribution — is next. See
+`docs/DEVELOPMENT_PLAN.md` and the original brief for Stage 8's
+acceptance criteria before starting; per this project's established
+rule, do not implement multiple stages in one pass.

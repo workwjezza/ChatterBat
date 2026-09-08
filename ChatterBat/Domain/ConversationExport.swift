@@ -38,5 +38,13 @@ struct ConversationExport: Codable, Equatable, Sendable {
         let promptTokens: Int?
         let completionTokens: Int?
         let totalTokens: Int?
+        /// Stage 7: present only for a `.tool`-role message — see
+        /// `ToolInvocationRecord`. All four travel together or not at
+        /// all, mirroring how `ToolInvocationRecord` itself is either
+        /// fully present or `nil` on `TranscriptMessage`.
+        let toolName: String?
+        let toolCallID: String?
+        let toolModelStatedReason: String?
+        let toolApprovedItemName: String?
     }
 }

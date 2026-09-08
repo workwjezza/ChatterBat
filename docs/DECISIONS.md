@@ -554,3 +554,95 @@ snapshot. The guard clauses in `retryLastTurn` are deliberately strict
 at an ambiguous transcript shape — see STATUS.md limitation 11 for the
 one gap this leaves in test coverage (the "does nothing" paths aren't
 each individually tested).
+
+## Stage 7
+
+### The model can never supply a filesystem path; the user always picks it via a native panel
+
+**Decision:** Both `AgentTool.readFile`/`.listDirectory` accept only a
+`reason` string argument in their JSON Schema — never a path. The
+actual file/folder is chosen exclusively by the user, live, via
+`NSOpenPanel` (`AgentToolPanelPresenter`), triggered only after the
+user taps "Approve" on the specific request.
+
+**Why:** The brief requires every tool invocation to be visible and
+individually approvable, "never silently expanding scope beyond
+what's shown." If the model could supply a path, "approve this tool"
+would implicitly also mean "approve reading whatever path the model
+names," which is a much larger, less legible grant than what's shown
+in the approval sheet. Making the path structurally ungrantable by
+the model — rather than merely displaying it for confirmation — means
+there is no code path in ChatterBat that resolves a model-supplied
+string against the filesystem at all, which is a stronger guarantee
+than a UI convention.
+
+### Stage 7 is read-only file access, not a general sandboxed-execution framework
+
+**Decision:** Only two tools exist (`read_file`, `list_directory`),
+both read-only, both gated by the same sandbox entitlement
+(`com.apple.security.files.user-selected.read-only`) already used for
+ordinary export/import file panels.
+
+**Why:** `docs/DEVELOPMENT_PLAN.md` explicitly scopes Stage 7 to
+"read-only tools" and separately lists shell execution/autonomous file
+edits/MCP/browser automation as out of scope for the foreseeable
+future. Reusing the existing user-selected-file sandbox mechanism
+(rather than requesting broader entitlements like
+`com.apple.security.files.downloads.read-write` or full filesystem
+access) means the agent beta's tools are exactly as powerful as
+ChatterBat's own export/import feature already was — no new privilege
+is introduced, only a new, permission-gated way to invoke the
+existing one.
+
+### Tool-calling round trips are rebuilt per-turn in memory, never reconstructed from persisted transcript history
+
+**Decision:** `ChatCoordinator.ActiveToolContext` keeps the exact
+`outgoingSoFar` message list (including the assistant's `tool_calls`
+message and the `.tool`-role result) for the current turn only, in
+memory. `TranscriptMessage.isEligibleForContext` always excludes
+`.tool`-role messages, so a *later*, unrelated turn never tries to
+replay an old tool call from persisted history.
+
+**Why:** Correctly replaying a tool-calling round trip requires the
+exact original `tool_calls` JSON arguments and matching `tool_call_id`
+— reconstructing that faithfully from a persisted transcript weeks
+later would require persisting and round-tripping raw provider JSON
+verbatim, which doesn't fit this project's existing plain-column
+persistence model and would reintroduce the kind of nested/relational
+complexity Stage 4's crash story already ruled out. Since the
+brief's own use case for tools is answering the *current* question,
+not maintaining a permanent tool-calling session, scoping the replay
+to one in-memory turn is sufficient and much simpler. The `.tool`
+message itself is still permanently persisted and displayed — only
+its *replay to the model* is scoped to the turn that created it.
+
+### `parallel_tool_calls: false` is always sent whenever any tool is offered
+
+**Decision:** `ChatRequestBuilder.body` sets
+`"parallel_tool_calls": false` unconditionally whenever `tools` is
+non-empty (both Venice and OpenRouter document this OpenAI-compatible
+parameter).
+
+**Why:** The approval flow (`ChatCoordinator`'s `ActiveToolContext`)
+is built around tracking exactly one pending tool call at a time —
+`ChatStreamDecoder.decode` also only inspects `delta.tool_calls[0]` for
+this reason. Forcing single tool calls server-side turns "there is at
+most one in-flight call" from an assumption about model behavior into
+a documented, provider-enforced request property, which is safer than
+hoping models never emit more than one function call per turn.
+
+### A denied/cancelled/unrecognized tool call still gets a real follow-up request, never a dead end
+
+**Decision:** `ChatCoordinator.continueAfterToolOutcome` always sends
+a follow-up request (replaying the tool_calls/tool-result pair) after
+*any* outcome — approved-and-succeeded, denied, panel-cancelled, read
+failure, or even an unrecognized tool name — never just stopping and
+leaving the conversation mid-turn.
+
+**Why:** Per OpenAI-compatible tool semantics, once a model's message
+contains `tool_calls`, the *next* message in the conversation must be
+a `tool`-role response to each of those calls before the model can be
+asked anything else — omitting it would produce an invalid request on
+any subsequent send. It's also better UX: a denial should let the
+model gracefully explain it can't help with that part rather than the
+turn just silently going nowhere.

@@ -31,6 +31,24 @@ final class AppViewModel {
     /// requirement.
     var advancedChatSettings = AdvancedChatSettings()
 
+    /// Stage 7: whether the read-only agent tools beta is turned on
+    /// for the *next* message sent. Off by default — per the brief,
+    /// this is "an explicitly separate, optional mode from the
+    /// chat-first product," never something a user is opted into
+    /// silently. Same "simple app-wide current selection, not
+    /// persisted per-conversation" treatment as `selectedModel`/
+    /// `advancedChatSettings`.
+    var agentToolsEnabled = false
+
+    /// The tools to actually offer on the next send: every defined
+    /// `AgentTool` when the toggle is on, otherwise none. `ChatCoordinator.send`
+    /// still separately gates this on `model.supportsTools == .supported`
+    /// — this computed property only reflects the user's own
+    /// intent, not model capability.
+    var toolsToOffer: [AgentTool] {
+        agentToolsEnabled ? AgentTool.allCases : []
+    }
+
     /// `nil` until `loadFromRepository()` runs (or in previews/tests that
     /// never call it), in which case conversation-list mutations stay
     /// in-memory-only — this lets existing previews/tests keep working

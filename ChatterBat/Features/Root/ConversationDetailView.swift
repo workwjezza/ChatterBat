@@ -71,10 +71,33 @@ struct ConversationDetailView: View {
                         hasContextBoundary: coordinator.contextBoundaryMessageID(for: conversation.id) != nil,
                         onClearContextBoundary: {
                             coordinator.setContextBoundary(nil, in: conversation.id)
-                        }
+                        },
+                        agentToolsEnabled: $viewModel.agentToolsEnabled
                     )
                 }
             }
+        }
+        .sheet(item: Binding(
+            get: { coordinator.pendingToolApproval(for: conversation.id) },
+            set: { newValue in
+                // Only denies if a decision genuinely hasn't already
+                // been made — Approve/Deny inside the sheet resolve
+                // the pending call directly via ChatCoordinator, which
+                // is what actually clears `pendingToolApproval` and
+                // lets SwiftUI dismiss this sheet on its own; this
+                // guard exists purely so an unexpected dismissal
+                // (e.g. the window closing) never leaves a tool call
+                // silently unresolved.
+                if newValue == nil && coordinator.pendingToolApproval(for: conversation.id) != nil {
+                    coordinator.respondToToolApproval(in: conversation.id, approve: false)
+                }
+            }
+        )) { invocation in
+            AgentToolApprovalView(
+                invocation: invocation,
+                onApprove: { coordinator.respondToToolApproval(in: conversation.id, approve: true) },
+                onDeny: { coordinator.respondToToolApproval(in: conversation.id, approve: false) }
+            )
         }
         .alert(
             "Share history with \(pendingServiceSwitchModel?.service.displayName ?? "")?",
@@ -86,7 +109,13 @@ struct ConversationDetailView: View {
             Button("Cancel", role: .cancel) { pendingServiceSwitchModel = nil }
             Button("Send") {
                 if let model = pendingServiceSwitchModel {
-                    coordinator.send(text: draftText, in: conversation.id, using: model, settings: viewModel.advancedChatSettings)
+                    coordinator.send(
+                        text: draftText,
+                        in: conversation.id,
+                        using: model,
+                        settings: viewModel.advancedChatSettings,
+                        tools: viewModel.toolsToOffer
+                    )
                     draftText = ""
                 }
                 pendingServiceSwitchModel = nil
@@ -126,7 +155,13 @@ struct ConversationDetailView: View {
             pendingServiceSwitchModel = model
             return
         }
-        coordinator.send(text: draftText, in: conversation.id, using: model, settings: viewModel.advancedChatSettings)
+        coordinator.send(
+            text: draftText,
+            in: conversation.id,
+            using: model,
+            settings: viewModel.advancedChatSettings,
+            tools: viewModel.toolsToOffer
+        )
         draftText = ""
     }
 }

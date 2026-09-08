@@ -96,9 +96,14 @@ final class SwiftDataConversationRepository: ConversationRepository {
 
     func interruptAllStreamingMessages() throws {
         let allMessages = try context.fetch(FetchDescriptor<PersistedMessage>())
-        let streamingMessages = allMessages.filter { $0.statusRaw == "streaming" }
-        guard !streamingMessages.isEmpty else { return }
-        for message in streamingMessages {
+        // Stage 7: a `.tool` message left `awaitingApproval` at quit
+        // (the app closed before the user approved/denied it) gets
+        // the same treatment as an interrupted `.streaming` message —
+        // per the brief, an unfinished turn must never be silently
+        // displayed as if it's still live/actionable after relaunch.
+        let unfinishedMessages = allMessages.filter { $0.statusRaw == "streaming" || $0.statusRaw == "awaitingApproval" }
+        guard !unfinishedMessages.isEmpty else { return }
+        for message in unfinishedMessages {
             message.statusRaw = "interrupted"
         }
         try context.save()

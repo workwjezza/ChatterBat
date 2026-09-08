@@ -27,6 +27,14 @@ enum ChatStreamEvent: Equatable, Sendable {
     /// A chunk that decoded successfully but carried nothing actionable
     /// (e.g. an empty delta with no finish reason) — safe to ignore.
     case ignorable
+    /// Stage 7: one fragment of a tool call the model is requesting.
+    /// Matches the documented OpenAI-compatible streaming shape both
+    /// providers use: `id`/`name`/`type` are only present on the
+    /// *first* chunk for a given `index`; every chunk (including the
+    /// first) carries an `argumentsFragment` that must be concatenated,
+    /// in order, per `index`, to reconstruct the full JSON arguments
+    /// string once the tool call is complete.
+    case toolCallDelta(index: Int, id: String?, name: String?, argumentsFragment: String)
 }
 
 /// Decodes one SSE `data:` payload string into a `ChatStreamEvent`.
@@ -69,6 +77,23 @@ enum ChatStreamDecoder {
            let content = delta["content"] as? String,
            !content.isEmpty {
             return .contentDelta(content)
+        }
+
+        // Stage 7: tool-call fragments. ChatCoordinator always sends
+        // `parallel_tool_calls: false` whenever tools are enabled (see
+        // its doc comment), so in practice a chunk never carries more
+        // than one `delta.tool_calls` entry — decoding only the first
+        // is a deliberate simplification of this documented,
+        // self-enforced constraint, not an unhandled edge case.
+        if let delta = firstChoice?["delta"] as? [String: Any],
+           let toolCalls = delta["tool_calls"] as? [[String: Any]],
+           let first = toolCalls.first {
+            let index = ModelCatalogDecoding.int(first["index"]) ?? 0
+            let id = first["id"] as? String
+            let function = first["function"] as? [String: Any]
+            let name = function?["name"] as? String
+            let argumentsFragment = function?["arguments"] as? String ?? ""
+            return .toolCallDelta(index: index, id: id, name: name, argumentsFragment: argumentsFragment)
         }
 
         if let firstChoice, let finishReason = firstChoice["finish_reason"] as? String {

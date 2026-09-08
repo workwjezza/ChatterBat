@@ -23,6 +23,12 @@ struct AdvancedSettingsView: View {
     /// boundary.
     let hasContextBoundary: Bool
     let onClearContextBoundary: () -> Void
+    /// Stage 7: the "Agent Tools (Beta)" toggle — deliberately placed
+    /// in this same advanced-settings surface (rather than somewhere
+    /// more prominent) per the brief's requirement that the agent
+    /// beta stay "explicitly separate, optional" from the chat-first
+    /// product, not front-and-center.
+    @Binding var agentToolsEnabled: Bool
 
     var body: some View {
         Form {
@@ -64,6 +70,25 @@ struct AdvancedSettingsView: View {
                     Text("Select a model to see its available advanced settings.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+            }
+
+            if let model {
+                Section("Agent Tools (Beta)") {
+                    if model.supportsTools == .supported {
+                        Toggle("Enable read-only tools for the next message", isOn: $agentToolsEnabled)
+                        Text("Every tool request still requires your explicit approval, one at a time, before it runs.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    } else if model.supportsTools == .unknown {
+                        Text("Tool support for this model is unknown, so tools are hidden.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("This model doesn't support tools.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -122,7 +147,8 @@ struct AdvancedSettingsView: View {
         ),
         contextUsage: ContextUsageEstimate(messageCount: 4, characterCount: 800, estimatedTokens: 200, percentOfContextWindow: 0.6),
         hasContextBoundary: false,
-        onClearContextBoundary: {}
+        onClearContextBoundary: {},
+        agentToolsEnabled: .constant(false)
     )
 }
 
@@ -132,6 +158,7 @@ struct AdvancedSettingsView: View {
         model: nil,
         contextUsage: nil,
         hasContextBoundary: false,
-        onClearContextBoundary: {}
+        onClearContextBoundary: {},
+        agentToolsEnabled: .constant(false)
     )
 }

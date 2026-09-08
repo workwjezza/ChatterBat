@@ -6,5 +6,15 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<!-- Stage 7: the read-only agent tools beta reads exactly one
+	     file/folder per approved tool call, and only the one the user
+	     picks via a native NSOpenPanel (SwiftUI's `.fileImporter`) at
+	     approval time — never an arbitrary path the model supplies.
+	     This entitlement is what makes that panel's resulting
+	     security-scoped grant actually readable by the sandboxed app;
+	     it is read-only, so it cannot be used to write/delete anything,
+	     consistent with Stage 7 being explicitly read-only-tools-only. -->
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
 </dict>
 </plist>

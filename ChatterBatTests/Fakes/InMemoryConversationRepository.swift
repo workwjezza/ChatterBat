@@ -66,7 +66,7 @@ final class InMemoryConversationRepository: ConversationRepository {
         for (conversationID, messages) in messagesByConversation {
             messagesByConversation[conversationID] = messages.map { message in
                 var copy = message
-                if copy.status == .streaming { copy.status = .interrupted }
+                if copy.status == .streaming || copy.status == .awaitingApproval { copy.status = .interrupted }
                 return copy
             }
         }

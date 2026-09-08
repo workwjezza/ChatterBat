@@ -12,11 +12,26 @@ protocol ChatStreamingClient: Sendable {
         apiKey: String,
         modelID: String,
         messages: [OutgoingChatMessage],
-        settings: AdvancedChatSettings
+        settings: AdvancedChatSettings,
+        tools: [AgentTool]
     ) -> AsyncThrowingStream<ChatStreamEvent, Error>
 }
 
 extension ChatStreamingClient {
+    /// Convenience overload for the Stage 6 call shape (settings, no
+    /// tools) — defaults `tools` to `[]`, which never changes the
+    /// resulting request body (see `ChatRequestBuilder`). Added in
+    /// Stage 7 so no pre-existing Stage 0–6 call site had to be
+    /// touched.
+    func streamChatCompletion(
+        apiKey: String,
+        modelID: String,
+        messages: [OutgoingChatMessage],
+        settings: AdvancedChatSettings
+    ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        streamChatCompletion(apiKey: apiKey, modelID: modelID, messages: messages, settings: settings, tools: [])
+    }
+
     /// Convenience overload for call sites (and Stage 0–5 tests) that
     /// don't need to pass advanced settings — defaults to the all-no-op
     /// `AdvancedChatSettings()`, which never changes the resulting
@@ -51,12 +66,13 @@ struct StandardChatStreamingClient: ChatStreamingClient {
         apiKey: String,
         modelID: String,
         messages: [OutgoingChatMessage],
-        settings: AdvancedChatSettings
+        settings: AdvancedChatSettings,
+        tools: [AgentTool]
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await run(apiKey: apiKey, modelID: modelID, messages: messages, settings: settings, continuation: continuation)
+                    try await run(apiKey: apiKey, modelID: modelID, messages: messages, settings: settings, tools: tools, continuation: continuation)
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -73,6 +89,7 @@ struct StandardChatStreamingClient: ChatStreamingClient {
         modelID: String,
         messages: [OutgoingChatMessage],
         settings: AdvancedChatSettings,
+        tools: [AgentTool],
         continuation: AsyncThrowingStream<ChatStreamEvent, Error>.Continuation
     ) async throws {
         var request = URLRequest(url: endpointURL)
@@ -83,7 +100,8 @@ struct StandardChatStreamingClient: ChatStreamingClient {
             modelID: modelID,
             messages: messages,
             service: service,
-            settings: settings
+            settings: settings,
+            tools: tools
         )
 
         let response: HTTPURLResponse
@@ -120,7 +138,7 @@ struct StandardChatStreamingClient: ChatStreamingClient {
                 case .finished, .usage:
                     observedFinishOrUsage = true
                     continuation.yield(decoded)
-                case .contentDelta, .ignorable:
+                case .contentDelta, .ignorable, .toolCallDelta:
                     continuation.yield(decoded)
                 }
             }
