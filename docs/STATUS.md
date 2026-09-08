@@ -4,6 +4,22 @@
 
 **Stage 6 — Enhanced chat controls.** Complete.
 
+## App icon
+
+`Assets.xcassets/AppIcon.appiconset` now contains a real icon,
+generated from two user-supplied source images (`chatterbaticon512.png`
+512×512, `chatterbaticon1024.png` 1024×1024) via `sips`, covering all
+ten required macOS sizes (16/32/128/256/512 pt at 1x/2x). Previously
+the iconset's `Contents.json` listed the required slots but had no
+actual image files or `filename` keys, so the app built and ran with
+no crash but an empty/default icon. Verified the generated
+`AppIcon.icns` in the built app bundle is a valid, non-blank RGBA icns
+with alpha (`sips -g all`) and that the app still launches normally
+with it. The two original source PNGs were removed from the repo root
+after being baked into the asset catalog at the correct sizes — they
+were never referenced by any build setting, so deleting them changes
+nothing about the build.
+
 ## Stage 6 — what's implemented
 
 - `AdvancedChatSettings` (+ `ReasoningEffort`, `VeniceAdvancedSettings`,
