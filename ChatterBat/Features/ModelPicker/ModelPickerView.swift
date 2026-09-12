@@ -17,15 +17,23 @@ struct ModelPickerView: View {
 
             Divider()
 
-            if allKnownModelsEmpty {
+            if !viewModel.taskPreset.isAvailable {
+                ContentUnavailableView("Not Available Yet", systemImage: "info.circle",
+                                       description: Text(viewModel.taskPreset.explanation))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if allKnownModelsEmpty {
                 emptyState
+            } else if viewModel.filteredModels.isEmpty {
+                ContentUnavailableView("No Matching Models", systemImage: "line.3.horizontal.decrease.circle",
+                                       description: Text("Try fewer requirements or Reset filters. Unknown capabilities do not satisfy an enabled filter."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
                     if !viewModel.searchText.isEmpty {
                         searchResultsSection
                     } else {
-                        if !viewModel.recentModels.isEmpty {
-                            modelSection("Recent", models: viewModel.recentModels)
+                        if !viewModel.filteredRecentModels.isEmpty {
+                            modelSection("Recent", models: viewModel.filteredRecentModels)
                         }
                         ForEach(AIService.allCases) { service in
                             serviceSection(service)
@@ -34,8 +42,19 @@ struct ModelPickerView: View {
                 }
                 .listStyle(.inset)
             }
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(AIService.allCases) { service in
+                    catalogStatus(service)
+                }
+                Text("✦ Low listed price, not a quality rating. Picker filters do not change Auto's saved policy or eligible favorites. Save Auto policy explicitly from the bookmark bar.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
         }
-        .frame(width: 520, height: 480)
+        .frame(width: 640, height: 660)
         .task {
             await viewModel.loadAllConfiguredCatalogs()
         }
@@ -47,6 +66,10 @@ struct ModelPickerView: View {
                 Text("Select a Model")
                     .font(.title3.bold())
                 Spacer()
+                Button("Refresh") {
+                    Task { await viewModel.loadAllConfiguredCatalogs() }
+                }
+                .disabled(AIService.allCases.contains { viewModel.catalogStates[$0].isLoading })
                 Button("Close") { dismiss() }
                     .keyboardShortcut(.escape, modifiers: [])
             }
@@ -73,8 +96,47 @@ struct ModelPickerView: View {
                     get: { viewModel.showFavoritesOnly },
                     set: { viewModel.showFavoritesOnly = $0 }
                 ))
-                .toggleStyle(.checkbox)
+                .pickerToggleStyle()
             }
+
+            HStack {
+                Picker("Task preset", selection: Binding(
+                    get: { viewModel.taskPreset },
+                    set: { viewModel.taskPreset = $0 }
+                )) {
+                    ForEach(ModelPickerTaskPreset.allCases) { preset in
+                        Text(preset.title).tag(preset)
+                    }
+                }
+                Button("Reset filters") { viewModel.resetFilters() }
+                    .disabled(!viewModel.hasActiveFilters)
+            }
+            Text(viewModel.taskPreset.explanation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 12) {
+                ForEach(ModelPickerCapability.allCases) { capability in
+                    Toggle(capability.title, isOn: Binding(
+                        get: { viewModel.requiredCapabilities.contains(capability) },
+                        set: { viewModel.setCapability(capability, enabled: $0) }
+                    ))
+                    .pickerToggleStyle()
+                    .disabled(viewModel.taskPreset.suggestedCapabilities.contains(capability))
+                    .help(viewModel.taskPreset.suggestedCapabilities.contains(capability)
+                          ? "Required by this task preset. Choose All tasks to remove this requirement. " + capability.explanation
+                          : capability.explanation)
+                    .accessibilityHint(capability.explanation)
+                }
+            }
+            Text("Requirements combine (AND). Only reported support matches; unknown is not unsupported. Image input is catalog metadata only—attachments are not implemented yet.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("\(viewModel.filteredModels.count) matching models")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding()
     }
@@ -130,9 +192,7 @@ struct ModelPickerView: View {
 
     @ViewBuilder
     private func serviceSection(_ service: AIService) -> some View {
-        let models = (viewModel.catalogStates[service]?.displayableModels ?? [])
-            .filter { viewModel.serviceFilter.matches($0.service) }
-            .filter { !viewModel.showFavoritesOnly || viewModel.isFavorite($0.identity) }
+        let models = viewModel.filteredModels(for: service)
 
         if !models.isEmpty {
             Section(service.displayName) {
@@ -140,7 +200,8 @@ struct ModelPickerView: View {
                     ModelRow(model: model, viewModel: viewModel, onSelect: select)
                 }
             }
-        } else if case .failed(let message, _, _) = viewModel.catalogStates[service] {
+        } else if viewModel.serviceFilter.matches(service),
+                  case .failed(let message, _, _) = viewModel.catalogStates[service] {
             Section(service.displayName) {
                 Label(message, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
@@ -153,6 +214,33 @@ struct ModelPickerView: View {
         viewModel.recordSelection(model.identity)
         onSelect(model)
         dismiss()
+    }
+
+    @ViewBuilder
+    private func catalogStatus(_ service: AIService) -> some View {
+        switch viewModel.catalogStates[service] {
+        case .loaded(_, let date):
+            Text("\(service.displayName) prices fetched \(date.formatted(date: .omitted, time: .shortened)) · Auto/value eligibility expires after 15 min")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        case .failed(let message, _, _):
+            Text("\(service.displayName): \(message) Cached prices may be stale; Auto/value highlighting unavailable.")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+        default:
+            EmptyView()
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func pickerToggleStyle() -> some View {
+        #if os(macOS)
+        toggleStyle(.checkbox)
+        #else
+        toggleStyle(.switch)
+        #endif
     }
 }
 

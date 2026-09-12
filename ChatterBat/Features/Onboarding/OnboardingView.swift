@@ -18,7 +18,7 @@ struct OnboardingView: View {
                 .font(.title.bold())
 
             Text(
-                "ChatterBat is a native Mac client for the Venice and OpenRouter " +
+                "ChatterBat is a native client for the Venice and OpenRouter " +
                 "APIs. You bring your own API key for either service (or both) " +
                 "and pay that service directly — ChatterBat has no account or " +
                 "subscription of its own."
@@ -26,10 +26,10 @@ struct OnboardingView: View {
             .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 8) {
-                bulletPoint("Connect Venice and/or OpenRouter in Settings → Accounts (⌘,).")
-                bulletPoint("Keys are stored only in the macOS Keychain — never in this app's own storage.")
-                bulletPoint("Pick a model for any conversation with ⌘K, any time.")
-                bulletPoint("Conversation history is kept locally on this Mac.")
+                bulletPoint("Connect Venice and/or OpenRouter in Account Settings.")
+                bulletPoint("Keys are stored only in this device's Keychain — never in this app's own storage.")
+                bulletPoint("Pick a model for any conversation whenever you need to switch.")
+                bulletPoint("Conversation history is kept locally on this device.")
             }
 
             Spacer(minLength: 0)

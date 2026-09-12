@@ -4,10 +4,11 @@ import XCTest
 final class ChatRequestBuilderTests: XCTestCase {
     private let messages = [OutgoingChatMessage(role: .user, content: "Hi")]
 
-    func testDefaultSettingsProduceNoAdvancedFields() {
+    func testDefaultSettingsDisableVenicePromptWithoutChangingReasoning() {
         let body = ChatRequestBuilder.body(modelID: "m", messages: messages, service: .venice)
         XCTAssertNil(body["reasoning_effort"])
-        XCTAssertNil(body["venice_parameters"])
+        let parameters = body["venice_parameters"] as? [String: Any]
+        XCTAssertEqual(parameters?["include_venice_system_prompt"] as? Bool, false)
         XCTAssertNil(body["provider"])
     }
 
@@ -23,10 +24,22 @@ final class ChatRequestBuilderTests: XCTestCase {
         XCTAssertEqual(body["reasoning_effort"] as? String, "low")
     }
 
-    func testVeniceParametersOmittedWhenBothFlagsFalse() {
+    func testVeniceParametersContainOnlyPromptControlWhenThinkingFlagsFalse() {
         let settings = AdvancedChatSettings(venice: VeniceAdvancedSettings(disableThinking: false, stripThinkingResponse: false))
         let body = ChatRequestBuilder.body(modelID: "m", messages: messages, service: .venice, settings: settings)
-        XCTAssertNil(body["venice_parameters"])
+        let parameters = body["venice_parameters"] as? [String: Any]
+        XCTAssertEqual(parameters?.count, 1)
+        XCTAssertEqual(parameters?["include_venice_system_prompt"] as? Bool, false)
+    }
+
+    func testVeniceSystemPromptCanBeRestored() {
+        let settings = AdvancedChatSettings(venice: VeniceAdvancedSettings(includeSystemPrompt: true))
+        let body = ChatRequestBuilder.body(modelID: "m", messages: messages, service: .venice, settings: settings)
+        let parameters = body["venice_parameters"] as? [String: Any]
+        XCTAssertEqual(parameters?["include_venice_system_prompt"] as? Bool, true)
+        let encoded = body["messages"] as? [[String: Any]]
+        XCTAssertEqual(encoded?.count, 1)
+        XCTAssertEqual(encoded?.first?["content"] as? String, "Hi")
     }
 
     func testVeniceParametersIncludesOnlySetFlags() {

@@ -6,7 +6,7 @@ import Foundation
 /// "provider" abstraction — the brief is explicit that Venice and
 /// OpenRouter are distinct services with distinct payloads, and model
 /// identity is always the pair (service, modelID). Do not merge them.
-enum AIService: String, CaseIterable, Identifiable, Sendable {
+enum AIService: String, CaseIterable, Identifiable, Sendable, Codable {
     case venice
     case openRouter
 

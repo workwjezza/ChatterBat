@@ -18,7 +18,7 @@ struct AppDependencies {
     let veniceChatClient: ChatStreamingClient
     let openRouterChatClient: ChatStreamingClient
     /// One shared `ChatCoordinator` for the whole app's lifetime — it
-    /// owns in-memory transcripts and the single global generation slot,
+    /// owns in-memory transcripts and bounded per-conversation execution,
     /// so it must not be recreated per-view.
     let chatCoordinator: ChatCoordinator
     /// One shared repository, backed by the app's real on-disk SwiftData
@@ -32,6 +32,7 @@ struct AppDependencies {
     /// toolchain.
     let initialConversations: [Conversation]
     let onboardingStateStore: OnboardingStateStore
+    var modelSelectionDefaultsStore: ModelSelectionDefaultsStore? = nil
 
     static func live() -> AppDependencies {
         let credentialStore = KeychainCredentialStore()
@@ -88,7 +89,8 @@ struct AppDependencies {
             chatCoordinator: chatCoordinator,
             conversationRepository: repository,
             initialConversations: initialConversations,
-            onboardingStateStore: UserDefaultsOnboardingStateStore()
+            onboardingStateStore: UserDefaultsOnboardingStateStore(),
+            modelSelectionDefaultsStore: UserDefaultsModelSelectionDefaultsStore()
         )
     }
 

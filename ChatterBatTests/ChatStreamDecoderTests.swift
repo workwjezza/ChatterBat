@@ -2,6 +2,34 @@ import XCTest
 @testable import ChatterBat
 
 final class ChatStreamDecoderTests: XCTestCase {
+    func testCombinedFramePreservesContentFinishAndAccounting() {
+        let payload = #"{"choices":[{"delta":{"content":"tail"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1740,"completion_tokens":111,"total_tokens":1851},"cost":{"usd":0.0103275}}"#
+        XCTAssertEqual(ChatStreamDecoder.decodeEvents(payload), [
+            .contentDelta("tail"), .finished(reason: "stop"),
+            .usage(ChatUsage(promptTokens: 1740, completionTokens: 111, totalTokens: 1851, costUSD: Decimal(string: "0.0103275")))
+        ])
+    }
+
+    func testCostOnlyFrameAndUsageSnapshotsMergeWithoutDoubleCounting() {
+        let initial = ChatUsage(promptTokens: 10, completionTokens: 5, totalTokens: 15)
+        let payload = #"{"choices":[],"cost":{"usd":0.01}}"#
+        guard case .usage(let cost) = ChatStreamDecoder.decodeEvents(payload).first else {
+            return XCTFail("Expected cost event")
+        }
+        let merged = initial.merging(cost).merging(initial)
+        XCTAssertEqual(merged.totalTokens, 15)
+        XCTAssertEqual(merged.costUSD, Decimal(string: "0.01"))
+    }
+
+    func testToolCallAndUsageInSameFrameAreBothPreserved() {
+        let payload = #"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"x","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":20}}"#
+        XCTAssertEqual(ChatStreamDecoder.decodeEvents(payload), [
+            .toolCallDelta(index: 0, id: "x", name: "read_file", argumentsFragment: "{}"),
+            .finished(reason: "tool_calls"),
+            .usage(ChatUsage(promptTokens: 20, completionTokens: nil, totalTokens: nil))
+        ])
+    }
+
     func testDoneSentinelReturnsNil() {
         XCTAssertNil(ChatStreamDecoder.decode("[DONE]"))
     }

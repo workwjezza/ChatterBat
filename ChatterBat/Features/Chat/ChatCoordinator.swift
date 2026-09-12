@@ -11,14 +11,37 @@ import Observation
 /// deltas are checkpointed to the repository periodically
 /// (`checkpointInterval`) rather than on every single delta, with an
 /// unconditional final write on every terminal state
-/// (completed/cancelled/failed). Per the brief, only one generation is
-/// active globally; `send` rejects a new send while `generationState` is
-/// not `.idle`.
+/// (completed/cancelled/failed). Each chat has one turn, with bounded
+/// concurrent execution and FIFO admission for additional chats.
 @Observable
 @MainActor
 final class ChatCoordinator {
     private(set) var transcripts: [UUID: [TranscriptMessage]] = [:]
-    private(set) var generationState: GenerationState = .idle
+    private(set) var generationStates: [UUID: GenerationState] = [:]
+    private(set) var queuedConversationIDs: [UUID] = []
+    private(set) var maxConcurrentTurns: Int
+    let maxQueuedTurns: Int
+
+    /// Aggregate compatibility readout. UI/actions must use state(for:) or
+    /// explicit IDs; this value does not represent every concurrent turn.
+    var generationState: GenerationState {
+        generationStates.sorted { $0.key.uuidString < $1.key.uuidString }.first?.value ?? .idle
+    }
+
+    func state(for conversationID: UUID) -> GenerationState { generationStates[conversationID] ?? .idle }
+    func isBusy(_ conversationID: UUID) -> Bool { state(for: conversationID) != .idle }
+    var busyConversationIDs: Set<UUID> { Set(generationStates.keys) }
+    var activeTurnCount: Int { generationStates.count - queuedConversationIDs.count }
+    var canAcceptTurn: Bool { activeTurnCount < maxConcurrentTurns || queuedConversationIDs.count < maxQueuedTurns }
+
+    func queuePosition(for conversationID: UUID) -> Int? {
+        queuedConversationIDs.firstIndex(of: conversationID).map { $0 + 1 }
+    }
+
+    func setConcurrencyLimit(_ limit: Int) {
+        maxConcurrentTurns = min(4, max(1, limit))
+        drainQueue() // Lowering a limit does not cancel already admitted turns.
+    }
 
     /// Records, per conversation, which service has actually received
     /// this conversation's history so far (i.e. the service used for the
@@ -31,7 +54,22 @@ final class ChatCoordinator {
     private let credentialStore: CredentialStore
     private let clients: [AIService: ChatStreamingClient]
     private let repository: ConversationRepository?
-    private var activeTask: Task<Void, Never>?
+    private var activeTasks: [UUID: Task<Void, Never>] = [:]
+    private var queuedTurns: [UUID: QueuedTurn] = [:]
+    private var isDrainingQueue = false
+    private var isStoppingAll = false
+    private var panelOwner: UUID?
+
+    private struct QueuedTurn {
+        let model: ModelInfo
+        let assistantMessageID: UUID
+        let outgoing: [OutgoingChatMessage]
+        let settings: AdvancedChatSettings
+        let tools: [AgentTool]
+        /// Recheck captured Auto consent/catalog before initial dispatch.
+        /// No network calls are permitted in this local validator.
+        let validateBeforeStart: (@MainActor () -> String?)?
+    }
     private var loadedConversationIDs: Set<UUID> = []
     /// Cached context boundaries, keyed by conversation ID. The value
     /// itself is `UUID?` (so the dictionary entry is `UUID??`) so that
@@ -54,10 +92,8 @@ final class ChatCoordinator {
     /// real presenter) so `ChatCoordinator`'s agent-tools tests never
     /// pop a real system panel, per the brief's testing contract.
     private let toolPanelPresenter: AgentToolPanelPresenting
-    /// Per-conversation state for an in-progress agent-tools round
-    /// trip — see `ActiveToolContext`'s doc comment. Only ever
-    /// non-`nil` while `generationState` for that conversation is
-    /// `.streaming` (mid-tool-call-round) or `.awaitingToolApproval`.
+    /// Per-conversation tool context, retained across approval, execution,
+    /// continuation and cancellation until that turn fully unwinds.
     private var activeToolContexts: [UUID: ActiveToolContext] = [:]
     /// Defensive cap on how many tool-call round trips one turn may
     /// make before ChatterBat stops offering tools and forces a final
@@ -73,13 +109,17 @@ final class ChatCoordinator {
         clients: [AIService: ChatStreamingClient],
         repository: ConversationRepository? = nil,
         checkpointInterval: Int = 20,
-        toolPanelPresenter: AgentToolPanelPresenting = AgentToolPanelPresenter()
+        toolPanelPresenter: AgentToolPanelPresenting = AgentToolPanelPresenter(),
+        maxConcurrentTurns: Int = 2,
+        maxQueuedTurns: Int = 8
     ) {
         self.credentialStore = credentialStore
         self.clients = clients
         self.repository = repository
         self.checkpointInterval = max(1, checkpointInterval)
         self.toolPanelPresenter = toolPanelPresenter
+        self.maxConcurrentTurns = min(4, max(1, maxConcurrentTurns))
+        self.maxQueuedTurns = max(0, min(32, maxQueuedTurns))
     }
 
     /// Per-turn agent-tools state, kept only in memory (never
@@ -192,12 +232,25 @@ final class ChatCoordinator {
     /// An estimate (never authoritative — see `ContextUsageEstimate`)
     /// of how much of `model`'s context window the *next* send would
     /// use, given the current transcript and context boundary.
-    func contextUsageEstimate(for conversationID: UUID, model: ModelInfo) -> ContextUsageEstimate {
-        ContextUsageEstimate.estimate(for: eligibleOutgoingMessages(for: conversationID), contextLength: model.contextLength)
+    func contextUsageEstimate(for conversationID: UUID, model: ModelInfo, draft: String = "") -> ContextUsageEstimate {
+        let outgoing = eligibleOutgoingMessages(for: conversationID)
+            + (draft.isEmpty ? [] : [OutgoingChatMessage(role: .user, content: draft)])
+        return ContextUsageEstimate.estimate(for: outgoing, contextLength: model.contextLength)
+    }
+
+    /// Conservative routing budget: UTF-8 bytes rather than English-only
+    /// chars/4, plus message overhead and output/tool headroom. Still not an
+    /// authoritative tokenizer count; never truncates saved or sent history.
+    func autoRoutingContext(for conversationID: UUID, draft: String) -> (required: Int, recent: String) {
+        let outgoing = eligibleOutgoingMessages(for: conversationID)
+        let required = outgoing.reduce(draft.utf8.count + 4096) { $0 + $1.content.utf8.count + 32 }
+        let recent = outgoing.filter { $0.role == .user }.suffix(2)
+            .map { String($0.content.suffix(2000)) }.joined(separator: "\n")
+        return (required, recent)
     }
 
     /// Sends `text` as a new user turn in `conversationID` using `model`.
-    /// No-ops if a generation is already active anywhere in the app, or
+    /// Rejects if this chat already has a turn, admission is full, or
     /// if `text` is empty after trimming — callers should disable Send in
     /// those cases, but this guards against a duplicate/racy invocation
     /// regardless.
@@ -217,16 +270,18 @@ final class ChatCoordinator {
     /// see `pendingToolApproval(for:)`/`respondToToolApproval(in:approve:)`
     /// — this parameter only controls whether tools are *offered* at
     /// all, never whether one runs unapproved.
+    @discardableResult
     func send(
         text: String,
         in conversationID: UUID,
         using model: ModelInfo,
         settings: AdvancedChatSettings = AdvancedChatSettings(),
-        tools: [AgentTool] = []
-    ) {
-        guard generationState == .idle else { return }
+        tools: [AgentTool] = [],
+        validateBeforeStart: (@MainActor () -> String?)? = nil
+    ) -> Bool {
+        guard !isBusy(conversationID), canAcceptTurn else { return false }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return false }
 
         let userMessage = TranscriptMessage(role: .user, content: trimmed, status: .completed)
         let assistantMessage = TranscriptMessage(
@@ -244,57 +299,95 @@ final class ChatCoordinator {
 
         appendAndPersist(userMessage, in: conversationID)
         appendAndPersist(assistantMessage, in: conversationID)
-        generationState = .connecting(conversationID: conversationID)
+        generationStates[conversationID] = .queued(conversationID: conversationID)
         activeToolContexts[conversationID] = nil
+        queuedTurns[conversationID] = QueuedTurn(model: model, assistantMessageID: assistantMessageID,
+                                               outgoing: outgoing, settings: applicableSettings, tools: applicableTools,
+                                               validateBeforeStart: validateBeforeStart)
+        queuedConversationIDs.append(conversationID)
+        drainQueue()
+        return true
+    }
 
-        guard let key = (try? credentialStore.loadKey(for: model.service)) ?? nil else {
-            fail(assistantMessageID, in: conversationID, message: "No API key configured for \(model.service.displayName). Connect it in Settings → Accounts.")
-            generationState = .idle
-            return
-        }
-        guard let client = clients[model.service] else {
-            fail(assistantMessageID, in: conversationID, message: "\(model.service.displayName) is not available.")
-            generationState = .idle
-            return
-        }
-
-        activeTask = Task { [weak self] in
-            await self?.runStream(
-                client: client,
-                apiKey: key,
-                model: model,
-                conversationID: conversationID,
-                assistantMessageID: assistantMessageID,
-                outgoing: outgoing,
-                settings: applicableSettings,
-                tools: applicableTools
-            )
+    private func drainQueue() {
+        guard !isDrainingQueue, !isStoppingAll else { return }
+        isDrainingQueue = true
+        defer { isDrainingQueue = false }
+        while activeTurnCount < maxConcurrentTurns, let id = queuedConversationIDs.first {
+            queuedConversationIDs.removeFirst()
+            guard let turn = queuedTurns.removeValue(forKey: id) else { continue }
+            generationStates[id] = .connecting(conversationID: id)
+            if let error = turn.validateBeforeStart?() {
+                fail(turn.assistantMessageID, in: id, message: error)
+                finishTurn(id)
+                continue
+            }
+            guard let key = (try? credentialStore.loadKey(for: turn.model.service)) ?? nil,
+                  let client = clients[turn.model.service] else {
+                fail(turn.assistantMessageID, in: id, message: "No API key or client configured for \(turn.model.service.displayName). Connect it in Settings → Accounts.")
+                finishTurn(id)
+                continue
+            }
+            activeTasks[id] = Task { [weak self] in
+                await self?.runStream(client: client, apiKey: key, model: turn.model, conversationID: id,
+                                      assistantMessageID: turn.assistantMessageID, outgoing: turn.outgoing,
+                                      settings: turn.settings, tools: turn.tools)
+            }
         }
     }
 
-    /// Cancels the active generation, if any. The assistant message's
-    /// partial content is preserved and marked `.cancelled`. Per the
-    /// brief, this cancels the actual network task but does not
-    /// guarantee the provider itself stopped billing.
-    ///
-    /// Stage 7: while a tool approval is pending (no network task is
-    /// active at that point — see `pendingToolApproval(for:)`),
-    /// Stop/Escape instead denies that pending tool call, so the
-    /// button is never a dead no-op while the approval sheet is
-    /// showing.
+    private func finishTurn(_ conversationID: UUID) {
+        activeTasks[conversationID] = nil
+        activeToolContexts[conversationID] = nil
+        generationStates[conversationID] = nil
+        drainQueue()
+    }
+
+    /// Legacy single-turn convenience. Never arbitrarily stops another chat
+    /// when more than one exists; UI uses the ID-scoped overload.
     func stopGeneration() {
-        if case .awaitingToolApproval(let conversationID) = generationState {
-            respondToToolApproval(in: conversationID, approve: false)
-            return
+        guard generationStates.count == 1, let id = generationStates.keys.first else { return }
+        stopGeneration(in: id)
+    }
+
+    /// Cancellation never starts a billable denial follow-up. Active tasks
+    /// retain their slot until they unwind, preventing stale cleanup from
+    /// touching a replacement turn. Upstream billing may still continue.
+    func stopGeneration(in conversationID: UUID) {
+        guard isBusy(conversationID) else { return }
+        if let queued = queuedTurns.removeValue(forKey: conversationID) {
+            queuedConversationIDs.removeAll { $0 == conversationID }
+            markCancelled(queued.assistantMessageID, in: conversationID)
+            finishTurn(conversationID)
+        } else if case .awaitingToolApproval = state(for: conversationID) {
+            cancelPendingTool(in: conversationID)
+            finishTurn(conversationID)
+        } else {
+            generationStates[conversationID] = .cancelling(conversationID: conversationID)
+            activeTasks[conversationID]?.cancel()
         }
-        activeTask?.cancel()
+    }
+
+    func stopAllGenerations() {
+        isStoppingAll = true
+        for id in Array(generationStates.keys) { stopGeneration(in: id) }
+        isStoppingAll = false
+    }
+
+    private func cancelPendingTool(in conversationID: UUID) {
+        guard let messageID = activeToolContexts[conversationID]?.toolMessageID else { return }
+        update(messageID, in: conversationID) { message in
+            message.status = .toolDenied
+            message.content = "Task stopped. Tool result was not sent to the provider."
+        }
+        persistCurrentState(of: messageID, in: conversationID)
     }
 
     /// The tool call currently awaiting the user's explicit
     /// approve/deny decision in `conversationID`, or `nil` if none.
-    /// Drives the approval sheet — see `AgentToolApprovalView`.
+    /// Drives the conversation-local approval card.
     func pendingToolApproval(for conversationID: UUID) -> ToolInvocationRecord? {
-        guard case .awaitingToolApproval(let activeConversationID) = generationState, activeConversationID == conversationID else {
+        guard case .awaitingToolApproval = state(for: conversationID) else {
             return nil
         }
         guard let toolMessageID = activeToolContexts[conversationID]?.toolMessageID else { return nil }
@@ -314,8 +407,8 @@ final class ChatCoordinator {
     /// tool's result content — never silently swallowed — so the
     /// model can respond honestly (e.g. explain it couldn't read the
     /// file, or continue without it).
-    func respondToToolApproval(in conversationID: UUID, approve: Bool) {
-        guard case .awaitingToolApproval(let activeConversationID) = generationState, activeConversationID == conversationID else {
+    func respondToToolApproval(in conversationID: UUID, approve: Bool, expectedToolCallID: String? = nil) {
+        guard case .awaitingToolApproval = state(for: conversationID) else {
             return
         }
         guard
@@ -324,8 +417,12 @@ final class ChatCoordinator {
             let toolMessageID = context.toolMessageID,
             let tool = AgentTool(rawValue: pendingCall.name)
         else { return }
+        guard expectedToolCallID == nil || pendingCall.id == expectedToolCallID else { return }
 
-        activeTask = Task { [weak self] in
+        // Claim the decision synchronously. A remounted approval card or
+        // repeated callback must not start two resolutions for one call.
+        generationStates[conversationID] = .connecting(conversationID: conversationID)
+        activeTasks[conversationID] = Task { [weak self] in
             await self?.resolveToolApproval(
                 approve: approve,
                 tool: tool,
@@ -348,7 +445,7 @@ final class ChatCoordinator {
         settings: AdvancedChatSettings = AdvancedChatSettings(),
         tools: [AgentTool] = []
     ) {
-        guard generationState == .idle else { return }
+        guard !isBusy(conversationID), canAcceptTurn else { return }
         var messages = self.messages(for: conversationID)
         guard let lastAssistant = messages.last, lastAssistant.role == .assistant else { return }
         guard case .failed = lastAssistant.status else { return }
@@ -392,7 +489,12 @@ final class ChatCoordinator {
         tools: [AgentTool],
         roundCount: Int = 0
     ) async {
-        generationState = .streaming(conversationID: conversationID)
+        guard !Task.isCancelled else {
+            markCancelled(assistantMessageID, in: conversationID)
+            finishTurn(conversationID)
+            return
+        }
+        generationStates[conversationID] = .streaming(conversationID: conversationID)
         var deltasSinceCheckpoint = 0
         // Stage 7: accumulated tool-call fragments — see
         // `ChatStreamEvent.toolCallDelta`'s doc comment on why only
@@ -403,6 +505,9 @@ final class ChatCoordinator {
         var didRequestTool = false
 
         do {
+            // From this point history may have reached the provider, even
+            // if the response fails or is cancelled part way through.
+            lastUsedService[conversationID] = model.service
             let stream = client.streamChatCompletion(apiKey: apiKey, modelID: model.modelID, messages: outgoing, settings: settings, tools: tools)
             for try await event in stream {
                 if Task.isCancelled { break }
@@ -446,14 +551,14 @@ final class ChatCoordinator {
         } catch is CancellationError {
             markCancelled(assistantMessageID, in: conversationID)
         } catch let error as ChatRequestError {
-            fail(assistantMessageID, in: conversationID, message: error.userMessage)
+            if Task.isCancelled { markCancelled(assistantMessageID, in: conversationID) }
+            else { fail(assistantMessageID, in: conversationID, message: error.userMessage) }
         } catch {
-            fail(assistantMessageID, in: conversationID, message: error.localizedDescription)
+            if Task.isCancelled { markCancelled(assistantMessageID, in: conversationID) }
+            else { fail(assistantMessageID, in: conversationID, message: error.localizedDescription) }
         }
 
-        generationState = .idle
-        activeTask = nil
-        activeToolContexts[conversationID] = nil
+        finishTurn(conversationID)
     }
 
     private func apply(_ event: ChatStreamEvent, toMessage messageID: UUID, in conversationID: UUID) {
@@ -461,7 +566,7 @@ final class ChatCoordinator {
         case .contentDelta(let text):
             update(messageID, in: conversationID) { $0.content += text }
         case .usage(let usage):
-            update(messageID, in: conversationID) { $0.usage = usage }
+            update(messageID, in: conversationID) { $0.usage = $0.usage?.merging(usage) ?? usage }
         case .finished, .ignorable, .streamError, .toolCallDelta:
             break
         }
@@ -527,7 +632,7 @@ final class ChatCoordinator {
             roundCount: roundCount
         )
 
-        guard AgentTool(rawValue: callName) != nil else {
+        guard let requestedTool = AgentTool(rawValue: callName), tools.contains(requestedTool) else {
             // The model asked for a tool name ChatterBat never
             // offered it — there is nothing valid to show an approval
             // sheet for, so this is resolved immediately (no approval
@@ -540,7 +645,7 @@ final class ChatCoordinator {
                 transcript.content = message
             }
             persistCurrentState(of: toolMessage.id, in: conversationID)
-            activeTask = Task { [weak self] in
+            activeTasks[conversationID] = Task { [weak self] in
                 await self?.continueAfterToolOutcome(
                     resultText: message,
                     pendingCall: pendingCall,
@@ -550,8 +655,8 @@ final class ChatCoordinator {
             return
         }
 
-        generationState = .awaitingToolApproval(conversationID: conversationID)
-        activeTask = nil
+        generationStates[conversationID] = .awaitingToolApproval(conversationID: conversationID)
+        activeTasks[conversationID] = nil
     }
 
     /// Executes (or denies) the pending tool call, records the
@@ -567,9 +672,27 @@ final class ChatCoordinator {
         toolMessageID: UUID,
         conversationID: UUID
     ) async {
+        // Native panels are shared UI. Wait cancellably for the one panel
+        // slot rather than overlapping dialogs from concurrent chats.
+        if approve {
+            while panelOwner != nil && !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+        }
+        guard !Task.isCancelled else {
+            cancelPendingTool(in: conversationID)
+            finishTurn(conversationID)
+            return
+        }
+        if approve { panelOwner = conversationID }
         let outcome: AgentToolExecutionResult = approve
-            ? await AgentToolExecutor.run(tool, using: toolPanelPresenter)
-            : .cancelled
+            ? await AgentToolExecutor.run(tool, using: toolPanelPresenter) : .cancelled
+        if approve { panelOwner = nil }
+        guard !Task.isCancelled else {
+            cancelPendingTool(in: conversationID)
+            finishTurn(conversationID)
+            return
+        }
 
         let resultText: String
         switch outcome {
@@ -604,6 +727,11 @@ final class ChatCoordinator {
     /// and sends the follow-up request replaying the assistant's tool
     /// request and this result, so the model can respond.
     private func continueAfterToolOutcome(resultText: String, pendingCall: OutgoingToolCall, conversationID: UUID) async {
+        guard !Task.isCancelled else {
+            cancelPendingTool(in: conversationID)
+            finishTurn(conversationID)
+            return
+        }
         guard let context = activeToolContexts[conversationID] else { return }
 
         let nextRoundCount = context.roundCount + 1
@@ -631,8 +759,7 @@ final class ChatCoordinator {
             let client = clients[context.model.service]
         else {
             fail(nextAssistantMessage.id, in: conversationID, message: "No API key configured for \(context.model.service.displayName). Connect it in Settings → Accounts.")
-            generationState = .idle
-            activeToolContexts[conversationID] = nil
+            finishTurn(conversationID)
             return
         }
 

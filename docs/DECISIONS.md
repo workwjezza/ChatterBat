@@ -1,5 +1,201 @@
 # ChatterBat — Decisions
 
+## E4a — Local-only workspace preview before provider/tool integration
+
+Expose E2 through an explicitly experimental per-chat preview, not an LLM
+tool or upload path. Keep preview state separate from draft/transcript and
+provider dependencies. Retain user-selected security scope through worker
+completion. Use one serial I/O actor and an app-wide bounded registry;
+MainActor owns consent/revocation and revalidates scope/binding generation
+after await. This blocks late results after revoke/rebind without claiming
+that cancellation can interrupt every filesystem syscall.
+
+Retain synchronous registry APIs for existing low-level tests only. The UI
+uses async registration/read and a non-I/O approval request. Actual sandbox
+grant reopening and visual/accessibility behavior remain manual gates, and
+the panel says experimental. No new entitlement or XPC workspace authority.
+See WORKSPACE_PREVIEW.md for E4a scope and E4b provider-consent prerequisites.
+
+## Workspace roadmap E3b — App Group named XPC, temporary user job only
+
+Use the documented macOS team-prefixed App Group service namespace for
+sandboxed client ↔ nonsandboxed user host discovery. Group access is not trust:
+host pins exact app/CLI signing identities and team, clients pin host, and
+UID checks remain. Wrong-ID same-group/team client is rejected. Bare tool
+targets require explicit codesign identifiers; bundle ID alone did not set
+the code identity here. Fix signing, never relax peer requirements.
+
+Test via a temporary current-user launchctl bootstrap with trap-protected
+bootout, no Library/LaunchAgents installation or production entitlement edits.
+Same PID after client exit, reconnect after controlled restart, and failure
+after bootout establish local lifecycle feasibility only. SMAppService UI,
+packaged upgrades/notarization and durable task recovery are not proven.
+See IPC_STANDALONE_PROBE.md for exact evidence and remaining deployment gates.
+
+## Workspace roadmap E3a — Isolated authenticated bundled XPC probe
+
+Use separate sandbox-only probe targets, not production ChatterBat wiring.
+NSXPCConnection code requirements (macOS 13+) pin Apple anchor, exact bundle
+identity and team on both ends before resume; OS effective UID is checked
+additionally. No PID-based trust or secret/path execution interface. Only a
+versioned bounded ping with nonce exists. Same-team wrong-ID client and wrong
+service expectation are live-tested negatives, not mocked trust decisions.
+
+Do not accept xcodebuild test products as sandbox proof: it injected testing
+exceptions into this environment's signed artifacts. Use separate build-only
+Release products, inspect strict signatures/entitlements, then run verify.sh.
+Negative-path Swift actor callback crashes were fixed before accepting the
+matrix. Final Release probes have only App Sandbox and clean 0/2/2 exits.
+
+This establishes bundled-service message authentication only (E3a). The
+separately installed host/CLI discovery and user-agent lifecycle remain E3b;
+no temporary Mach lookup exception or unauthenticated port is justified by
+this result. No launch service registration, production entitlement change,
+credential access, workspace IPC or distribution approval. See IPC_PROBE.md.
+
+## Workspace roadmap E2 — Retained handles, bounded reads, no tool wiring yet
+
+Implement an in-process read-only registry with host-looked-up scope, bound
+session IDs and consumed exact-action approvals. Retain root descriptors,
+walk one component at a time without symlink following, compare identities
+before/after I/O, reject special/multiply-linked/cross-device files, and use
+resolved spelling for protected-name checks. Bound reads, listing output and
+traversal depth; disclose listing omissions. No automatic truncation or
+whole-file mapping. No new library, entitlement or production agent tool.
+
+Keep this unwired: synchronous I/O can delay same-actor revocation, path
+checks are not exhaustive hostile-filesystem race prevention, and no real
+security-scoped root grant/IPC boundary has been validated. The 32-root
+registry and fixed deny rules are conservative scaffolding, not a secret
+scanner or .gitignore implementation. See WORKSPACE_READ_ACCESS.md before
+connecting it to UI, uploads or a future host. No writes/shell authorized.
+
+## Workspace roadmap E1 — Separate host; unwired permission foundation
+
+Recommend a separately installed user-level Swift coding host, preserving
+the chat app sandbox. Foreground executable/disposable-repo tests come
+before persistent service registration. Developer ID/notarization is the
+planned companion distribution route, not an App Store eligibility claim.
+Authenticated XPC is a candidate requiring a signed-target sandbox/peer-trust
+spike, not a proven transport in this repo. No listener or helper installed.
+
+Inspecting the B2 Release artifact found get-task-allow alongside hardened
+runtime; local Release success is not distribution readiness. Current
+Keychain queries lack a data-protection selection/access group, so same-team
+host access must not be assumed. Prefer independent host credential setup
+before any opt-in migration; existing app keys remain untouched.
+
+Add a pure typed permission policy and in-memory single-use approval ledger,
+not connected to production tools. Reads require approval; read-only mode
+denies edits/commands; credential/elevation actions always deny. Consent
+binds exact payload, session/action/workspace IDs and workspace revision;
+expiry, revocation, cancellation and observed clock rollback fail closed.
+This does not authenticate clients, verify actual disk preconditions, enforce
+filesystem containment or sandbox arbitrary shell. E2/E3 must prove those
+boundaries before an executor/listener uses this foundation. See
+CODING_HOST_SECURITY.md for evidence, references, threat model and gates.
+
+## Workspace roadmap B2 — Bounded turns, captured admission, scoped Stop
+
+Default to two active turns (session-configurable 1–4), with eight waiting
+FIFO turns and one turn per chat. Approval waits hold a slot. Retaining a
+slot until cancellation unwinds prevents stale cleanup from touching a new
+turn without pretending a cancelled network/panel task has already ended.
+All UI reads/actions use per-chat state; aggregate compatibility is not a
+concurrent execution API. Repository writes stay main-actor serialized.
+
+Capture request context/model/settings/tools at submission, but load keys
+at dispatch. Auto gets a captured local revalidation closure so waiting
+cannot silently outlive catalog/privacy/price eligibility. Invalid admission
+fails visibly, never reroutes or auto-retries. Stop all suppresses draining.
+Stop cancels locally without a new tool request; explicit Deny still produces
+the established denial follow-up. Only offered tools are executable.
+
+Serialize native file panels and check cancellation around panel access;
+the real presenter requests panel dismissal on cancellation. Keep queued
+records as unfinished messages in the existing schema and mark interrupted
+at restart rather than silently resuming. Queue position is live state, not
+part of transcript exports. Per-chat drafts/settings remain memory-only.
+
+## Workspace roadmap B1 — Isolate UI/session state before concurrency
+
+Use one observable ConversationSessionState per conversation and pass that
+object explicitly to the detail view. AppViewModel selection actions proxy
+only the current object; binding setters never follow a changing selection.
+Copy the saved Auto policy into each session, and resolve its identity on
+refresh rather than reapplying global defaults. Session state is deliberately
+in-memory in this slice; transcript/default persistence remains untouched.
+
+Keep the global generation limit until B2. Convert tool approval to a
+conversation-local card so navigation does not imply denial. Bind card
+decisions to the expected tool-call ID; synchronously claim resolution to
+prevent repeated callbacks from launching multiple continuations. Prevent
+active-chat deletion while the coordinator owns writes. Root-level metadata
+observation covers background chats without changing selected session state.
+
+Key the detail view by conversation ID to reset transient UI/undo/scroll
+state, while retaining drafts in session objects. Cross-service confirmation
+must still target the original conversation/draft/settings/tools. Manual
+keyboard/IME/VoiceOver and approval-card layout checks remain release gates.
+
+## Workspace roadmap A3 — Honest catalog filtering, not quality rankings
+
+Use only existing reported tools/reasoning/vision metadata for capability
+filters, sharing one predicate across search, Recent and provider sections.
+Unknown does not satisfy an enabled requirement, but is distinct from
+unsupported in row details. Correct partial/malformed OpenRouter metadata
+to Unknown at decoding rather than masking it in presentation.
+
+Task presets are local browsing aids: Coding requires reported reasoning
+with a heuristic disclaimer; Ideating/History provide guidance without
+invented quality filters. Web browsing/Image editing expose explanatory
+unavailable states until the runtime supports them. Presets cannot change
+prompts, permissions, model defaults or Auto candidate pools. Explicit
+capability toggles survive preset switches; preset-imposed requirements
+are visibly checked/locked. Reset affects browsing state only.
+
+Move the favorite star outside the selection button alongside capability
+details, eliminating nested controls rather than compounding their known
+keyboard/VoiceOver ambiguity. Manual accessibility verification remains.
+
+## Workspace roadmap A2 — Separate bookmark, default and Auto consent
+
+Keep favorites in their existing store; use a separate versioned,
+non-secret UserDefaults record for the new-chat pin and saved Auto policy.
+Only identities and consent boundaries persist, never stale catalog
+capabilities. Explicit Refresh/picker loading resolves them after launch.
+No startup network request was added to make saved selection appear ready.
+
+Auto's service/privacy and separate input/output rate ceilings are frozen
+when the user clicks Save Auto policy, not replaced by a different pin or
+catalog refresh. Current candidates still use fresh metadata. Saved
+OpenRouter restrictions are a privacy floor, combined with stricter current
+controls in both routing and outgoing requests. Invalid/future preference
+records mean unconfigured Auto, not a fallback model.
+
+The bar labels its new-chat-default role separately from the toolbar's
+current app-wide model. Picker selection is temporary; New Chat restores
+the saved default. Per-conversation isolation remains Batch B. UI actions
+and model methods guard active generation/approval; existing coordinator
+requests retain their captured settings when a new conversation is created.
+
+## Workspace roadmap A1 — Native composer keyboard boundary
+
+Use a focused `NSViewRepresentable` / plain `NSTextView` integration instead
+of relying on multiline SwiftUI `TextField.onSubmit`. The editor intercepts
+unmarked Return and handles Shift+Return itself; ordinary marked-text input
+stays with AppKit. Command+Return belongs to the focused editor rather than
+a SwiftUI button shortcut, so it cannot bypass the marked-text guard. During
+composition that command is consumed without sending. Native key-handler
+and hosted-view tests cover the behavior without provider calls. Physical
+IME, VoiceOver and visual checks remain a separate release requirement.
+
+Keep native undo/selection by replacing the backing string only for an
+external binding change; external draft replacement clears stale undo
+actions. Keep code-friendly plain text without smart quotes/dashes or text
+replacement. No global event monitor, accessibility permission requirement,
+third-party dependency or broader AppKit UI rewrite was introduced.
+
 Only meaningful, non-obvious decisions and their reasoning are recorded
 here. Routine implementation choices are not logged.
 
@@ -30,8 +226,9 @@ committing it and regenerating only when `project.yml` changes is simpler.
 
 ### Left code signing on Automatic/ad hoc rather than a fixed team
 
-**Decision:** Do not set `DEVELOPMENT_TEAM` in `project.yml`; let the app
-target build with ad hoc signing.
+**Decision (superseded — see the update below):** Do not set
+`DEVELOPMENT_TEAM` in `project.yml`; let the app target build with ad hoc
+signing.
 
 **Why:** A valid local "Apple Development" codesigning identity exists in
 Keychain, but `xcodebuild` refused to provision automatically without an
@@ -44,6 +241,29 @@ interactive Xcode account setup. This is the direct cause of the
 interactive Xcode access and is left as a documented manual step rather
 than worked around with something that would misrepresent the actual
 signing state.
+
+**Update (post-Stage-7 manual testing):** once an Apple ID was signed into
+Xcode → Settings → Accounts on this machine, `DEVELOPMENT_TEAM:
+"AM3FXP5BXT"` was added to `project.yml` (the personal team already used
+by this machine's other locally-signed apps, confirmed via that team's
+existing entries in `~/Library/Developer/Xcode/UserData/Provisioning
+Profiles`). This was necessary because ad hoc-signed builds have
+`TeamIdentifier=not set` and get a *different* CDHash on every rebuild —
+verified directly (`codesign -dvvv`) across consecutive clean builds. On
+a sandboxed app (`com.apple.security.app-sandbox`), the Keychain's
+per-app access control is anchored to the running app's code identity, so
+an ad hoc build with no stable team identity can lose access to
+previously-saved Keychain items (the app's own saved Venice/OpenRouter
+API keys) across rebuilds — this was reported as "I have to repaste my
+API keys every time I relaunch during development." Setting a real,
+stable `DEVELOPMENT_TEAM` fixes this: `TeamIdentifier=AM3FXP5BXT` was
+confirmed identical across multiple consecutive clean rebuilds after this
+change. This only works because a developer account is actually signed
+into Xcode on this machine; a fresh machine with no signed-in account
+would need to sign in first (Xcode → Settings → Accounts) before this
+setting resolves. `CODE_SIGN_STYLE` remains `Automatic`, so Xcode still
+auto-manages the underlying provisioning profile — only the team is now
+pinned instead of left to whatever ad hoc default was picked.
 
 ### Kept demo/preview fixtures as a clearly separate, documented layer
 

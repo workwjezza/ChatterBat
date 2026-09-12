@@ -2,6 +2,31 @@ import XCTest
 @testable import ChatterBat
 
 final class ModelPickerViewModelTests: XCTestCase {
+    @MainActor
+    func testAutoUsesRefreshedAnchorPricingAndNeverFetchesToClassifyPrompt() async throws {
+        func priced(_ price: Int) -> ModelInfo {
+            ModelInfo(identity: ModelIdentity(service: .venice, modelID: "anchor"), displayName: "Anchor",
+                      contextLength: 32_000, maxOutputTokens: nil,
+                      pricing: ModelPricing(inputPerMillionTokensUSD: Decimal(price), outputPerMillionTokensUSD: Decimal(price)),
+                      supportsTools: .supported, supportsReasoning: .supported, supportsVision: .unsupported,
+                      privacyDescription: "private")
+        }
+        let store = InMemoryCredentialStore()
+        try store.saveKey("fake", for: .venice)
+        let fetcher = FakeModelCatalogFetcher(service: .venice, outcomeToReturn: .success([priced(2)]))
+        let viewModel = ModelPickerViewModel(credentialStore: store, fetchers: [.venice: fetcher],
+                                             preferencesStore: InMemoryModelPreferencesStore())
+        await viewModel.refresh(.venice)
+        let decision = viewModel.autoDecision(prompt: "Debug code", recent: "", requiredContext: 5000,
+                                              anchor: priced(10), requiresTools: false, settings: AdvancedChatSettings())
+        XCTAssertEqual(decision.model, priced(2), "Do not use stale selected-model metadata.")
+        XCTAssertEqual(fetcher.fetchCount, 1, "Classification cannot trigger a network request.")
+        fetcher.outcomeToReturn = .transportFailure("Offline")
+        await viewModel.refresh(.venice)
+        XCTAssertNil(viewModel.autoDecision(prompt: "Hi", recent: "", requiredContext: 5000,
+                                            anchor: priced(10), requiresTools: false, settings: AdvancedChatSettings()).model)
+    }
+
     private func makeModel(
         service: AIService,
         id: String,
@@ -52,10 +77,12 @@ final class ModelPickerViewModelTests: XCTestCase {
 
         await viewModel.loadAllConfiguredCatalogs()
 
-        guard case .loaded(let models, _) = viewModel.catalogStates[.venice] else {
+        guard case .loaded(let models, let fetchedAt) = viewModel.catalogStates[.venice] else {
             return XCTFail("Expected loaded state")
         }
         XCTAssertEqual(models, [model])
+        XCTAssertEqual(viewModel.freshModels(for: .venice, now: fetchedAt.addingTimeInterval(899)), [model])
+        XCTAssertTrue(viewModel.freshModels(for: .venice, now: fetchedAt.addingTimeInterval(900)).isEmpty)
     }
 
     @MainActor
@@ -78,6 +105,7 @@ final class ModelPickerViewModelTests: XCTestCase {
             return XCTFail("Expected failed state")
         }
         XCTAssertEqual(cachedModels, [model], "A refresh failure must not blank out the last successful catalog.")
+        XCTAssertTrue(viewModel.freshModels(for: .venice).isEmpty, "Stale prices must not drive Auto.")
     }
 
     @MainActor

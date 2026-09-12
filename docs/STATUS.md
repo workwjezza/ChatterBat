@@ -1,5 +1,340 @@
 # ChatterBat — Status
 
+## E4a — Local read-only workspace preview (September 8, 2026)
+
+Added an experimental Workspace toolbar panel per chat: explicit folder
+selection, relative-path list/read proposals, exact local approval/denial,
+bounded preview, Stop/Disconnect and rolling local event labels. Preview
+content never enters draft, transcript, persistence or provider requests.
+This is not a model tool, production IPC client or installed coding backend.
+
+Async registry paths move opening/reading to a shared serial worker actor.
+MainActor retains consent and scope/binding revision checks before and after
+I/O. Revoke/unbind/rebind (including same-workspace rebind) suppress late
+results. Security-scoped URL leases stay alive through outstanding I/O.
+App-wide preview registry caps 32 roots/four outstanding reads, one per session;
+chat deletion disconnects its preview. No new app entitlements or schema.
+
+Verification: **363 app unit tests passed (9 new); Release build succeeded;
+git diff --check clean.** Final logs: `/tmp/ChatterBatWorkspaceUITests.log`,
+`/tmp/ChatterBatWorkspaceUIRelease.log`. Tests use temporary directories and
+controlled suspended workers, with no paid calls or live keys. No interactive
+UI/VoiceOver or real NSOpenPanel grant verification was performed.
+
+**Limitations:** real sandbox-selected roots may fail E2's conservative
+ancestor reopening/symlink rules; panel explicitly says experimental. Serial
+off-UI I/O is cooperative cancellation, not a hard filesystem timeout. E2
+hostile-filesystem limitations still apply. See WORKSPACE_PREVIEW.md.
+
+**Next E4b:** verify normal-build folder grants, then integrate controlled
+workspace tools, typed runtime events and explicit context/provider consent.
+No automatic upload or shell/write authority follows from local preview.
+
+## Workspace roadmap E3b — Separate-host discovery/lifecycle probe (September 8, 2026)
+
+Added isolated signed ping host/CLI and sandboxed standalone app/negative
+client targets, using a documented team-prefixed macOS App Group Mach service.
+Production ChatterBat entitlements/dependencies remain unchanged. Host/client
+signing requirements pin exact identities/team in both directions plus OS UID.
+No workspace, approval, credential, file-write or command RPC was added.
+
+Live build-only Release matrix passed twice: app and CLI ping successfully;
+same host PID survives app-client exit; same-group/team wrong client is denied;
+wrong expected host is denied from app/CLI; authorized CLI remains healthy;
+controlled host restart changes PID and CLI reconnects; bootout removes service
+and further CLI ping fails. XPC log confirmed wrong-client check-in dropped
+for code-signing requirement. Strict signature and exact entitlement checks
+passed. Host/CLI have only the test App Group; app clients have Sandbox plus
+that group. No temporary exceptions or get-task-allow in Release probes.
+
+The test runner uses a temporary plist/current-user GUI launchd registration
+with guarded cleanup, no sudo or Library/LaunchAgents install. **Cleanup
+verified: no probe registration remains.** Initial run exposed bare tool
+signing identifier mismatch; explicit codesign IDs fixed it without loosening
+trust. Listener denial can report interruption instead of request error; only
+clean known exit-2 outcomes pass negatives, never timeout/crash/pong.
+
+Verification: **354 app tests + 8 separate probe tests passed** (2 new probe
+tests); app, standalone probe and bundled regression Release builds succeeded.
+Both live matrices and shell syntax/git diff --check passed. See
+`IPC_STANDALONE_PROBE.md` for commands/logs and precise evidence.
+
+**E3b development feasibility complete, not production deployment.** Packaged
+companion/SMAppService consent, upgrades/notarization, physical macOS 14,
+different-user testing and durable recovery remain gates. No user data or
+provider keys accessed. E4a local preview/off-UI reads are now implemented;
+E4b model/provider integration remains gated. No writes/shell/host install.
+
+## Workspace roadmap E3a — Signed bundled XPC probe (September 8, 2026)
+
+Added isolated ChatterBatIPCProbe scheme/targets: sandboxed authorized app,
+bundled ping-only XPC service, same-team wrong-identity app and six protocol
+tests. None are linked into the normal ChatterBat app. Both directions pin
+exact signing identifier/team/Apple anchor before resume and check OS UID;
+ping validates version, size and nonce. No workspace or credential operation.
+
+**Live build-only Release matrix passed:** authorized → verified pong/exit 0;
+wrong client identity → rejected/exit 2; wrong expected service → rejected/
+exit 2. Strict signatures passed. Actual entitlements for both apps/service:
+**App Sandbox only**, no temporary exceptions, network/file grants or
+get-task-allow. Reproducer: `IPCProbe/verify.sh` with absolute Release products
+path; see `IPC_PROBE.md` for exact commands and evidence.
+
+Initial test-instrumented artifacts had injected test sandbox exceptions and
+were excluded from feasibility evidence. Initial negative-path callbacks also
+crashed on inferred Swift actor isolation; fixed explicit Sendable callbacks
+and reran cleanly. No timeout/crash counted as a successful rejection.
+
+Verification: **354 app tests + 6 separate probe tests passed**, both app and
+probe Release builds succeeded; shell syntax and git diff --check clean.
+Final logs: `/tmp/ChatterBatIPCProbeTests.log`, `/tmp/ChatterBatIPCProbeRelease.log`,
+`/tmp/ChatterBatE3AppTests.log`, `/tmp/ChatterBatE3AppRelease.log`; live probe
+logs listed in IPC_PROBE.md. Tested on current development macOS, not physical
+macOS 14. No paid APIs, provider keys, host install, launch-agent registration,
+notarization or production app entitlement changes. OS may retain probe
+sandbox containers and earlier crash diagnostics.
+
+**E3b now verifies separate-process development discovery/basic lifecycle;
+see the newer entry above.** Neither probe is a production coding host.
+
+## Workspace roadmap E2 — Bounded read-only workspace prototype (September 8, 2026)
+
+Implemented an unwired in-process WorkspaceReadRegistry: explicit root
+registration, retained directory handles, session binding, read-only scope,
+single-use exact-action approval consumption, revision invalidation and
+revoke/unbind cleanup. Workspace scope is looked up internally, not accepted
+from an execution caller. Max 32 roots; no persistent grants or host/UI wiring.
+
+WorkspaceReadAccess traverses relative components via openat/O_NOFOLLOW,
+checks type/device/link count and handle/path identity, rejects detected
+root/file mutation, and checks resolved names against conservative deny
+rules. Reads cap at 200,000 bytes; UTF-8/NUL checks; no whole-file mapping.
+Listings cap at 1,000 scanned entries and 64,000 output bytes with omissions
+disclosed. Symlinks, multiply linked files and special files are rejected or
+omitted. Descriptors are close-on-exec and close through RAII.
+
+**Limits:** synchronous main-actor prototype, not hard I/O timeout or complete
+hostile-filesystem race prevention. No .gitignore parsing/secret scanning,
+real bookmark grants, provider upload or production tool integration. No
+mount/device isolation experiment performed. See `WORKSPACE_READ_ACCESS.md`
+for exact mechanisms, tested races, remaining gates and conservative policy.
+Existing Stage 7 tools and app entitlements remain unchanged; no writes,
+shell or listener enabled.
+
+Verification: **354 unit tests passed (18 new); Release build succeeded;
+git diff --check clean.** Final logs: `/tmp/ChatterBatWorkspaceReadTests.log`,
+`/tmp/ChatterBatWorkspaceReadRelease.log`. Project regenerated with XcodeGen.
+New tests run real I/O only in disposable directories. No user repo/keys,
+paid APIs, interactive permission/UI checks or host installation involved.
+
+**E3a bundled ping is verified; E3b separate-host deployment remains.**
+
+## Workspace roadmap E1 — Host security spike and policy foundation (September 8, 2026)
+
+Recorded the separate user-level Swift coding-host recommendation, sandbox /
+distribution / local IPC / Keychain / workspace threat model and concrete
+E2–E4/F gates in `CODING_HOST_SECURITY.md`. Apple SMAppService, XPC, Keychain
+sharing and notarization references were checked via public Markdown docs.
+The current Release artifact has get-task-allow; no distribution-readiness
+claim is made. Existing Keychain queries do not establish shared host access.
+
+Added an **unwired** WorkspacePermissionPolicy and WorkspaceApprovalLedger:
+typed read/edit/command proposals, read-only default, all permitted actions
+require approval, credential/elevation cases denied, exact payload and
+session/action/workspace revision binding, bounded ticket lifetime/capacity,
+single-use consumption, expiry, observed clock rollback, revoke/cancel and
+current-scope recheck. Lexical path checks are not filesystem containment.
+The ledger is not client authentication or a persistent idempotency journal.
+
+No host/CLI/listener installed, no new frameworks/packages, no shell/file-write
+execution enabled, no production tools rewired, no sandbox/entitlement or
+Keychain changes. E1 is complete as a design/policy spike, not host feasibility
+validation. Signed IPC/installation, OS grant and migration behavior remain
+explicitly unproven and gated before integration.
+
+Verification: **336 unit tests passed (18 new); Release build succeeded;
+git diff --check clean.** XcodeGen regenerated the project. Final logs:
+`/tmp/ChatterBatPermissionsTests.log`, `/tmp/ChatterBatPermissionsRelease.log`.
+No paid APIs, live credential access, host install, distribution submission or
+interactive UI/IPC/Keychain sharing checks performed.
+
+**E2 is now implemented as an unwired read-only prototype; see above.**
+
+## Workspace roadmap B2 — Concurrent chats (September 8, 2026)
+
+Implemented per-conversation execution with 2 active turns by default,
+session-configurable 1–4, and up to 8 waiting FIFO chats. One turn per chat;
+duplicate/full admission rejects without modifying history or clearing the
+draft. Sidebar shows active counts, queue positions, approval/stopping state,
+limit selector, scoped Stop and Stop all. Composer labels queued admission;
+busy chats no longer lock model selection in unrelated conversations.
+
+Queued requests capture prompt/context/model/settings/tools; credentials are
+loaded at dispatch. Auto's captured policy is locally revalidated before
+dispatch; expired/changed choices fail visibly without a request or fallback.
+Cancellation retains active slots until tasks unwind and prevents late
+cleanup from affecting replacement turns. Stop all never drains the queue.
+
+Approval waits hold their turn's slot, while other slots can continue.
+Native file panels serialize, with cancellation checks before/after picking
+and real-panel dismissal requested on task cancellation. Stop now terminates
+locally without a billable denial follow-up; explicit Deny still continues
+the tool conversation. Unknown/unoffered tools cannot execute. All active,
+stopping and queued chats are protected from deletion.
+
+No persistence schema change: queued placeholders are unfinished transcript
+records with live Queued UI; relaunch marks them interrupted, never resumes
+the queue. Per-chat drafts/settings remain in memory until app quit; global
+defaults and completed transcripts/usage stay durable. See
+`CONCURRENT_CHATS.md` for semantics and limitations.
+
+Verification: **318 unit tests passed (15 new); Release build succeeded;
+git diff --check clean.** Project regenerated with XcodeGen. Final logs:
+`/tmp/ChatterBatConcurrentTests.log`, `/tmp/ChatterBatConcurrentRelease.log`.
+No paid provider calls, real credentials, interactive UI/native panel checks
+or XCUITest execution. Manual simultaneous-provider, panel cancellation,
+keyboard/VoiceOver and queue-layout checks remain release gates.
+
+**E1 is now completed as a design/policy spike; E2 follows.** C/D remain
+parallel desktop tracks, not blockers for the CLI coding milestone.
+
+## Workspace roadmap B1 — Independent conversation state (September 8, 2026)
+
+Implemented conversation-owned draft, model/identity, Auto mode/policy
+snapshot, advanced settings, tool toggle and selection notices. Detail
+bindings target a specific observable session, not the globally selected
+chat. Switching restores that chat's state. New/imported chats start from
+saved defaults with fresh tool/settings state; existing loaded chats keep
+their own snapshots when defaults change elsewhere, even if unopened.
+
+**In-memory only:** drafts and per-chat settings survive switching but not
+app quit. This is disclosed below the composer. Transcript persistence and
+saved global new-chat defaults remain unchanged; no schema migration or
+secret/draft storage in UserDefaults/exports was added.
+
+Tool approval is now an inline conversation-local card; navigation leaves
+it pending instead of denying implicitly. Decisions check the owning chat
+and expected call ID and are claimed synchronously to prevent duplicates.
+Active chat deletion is blocked in UI/view model. Background transcript
+updates refresh sidebar metadata for changed IDs without altering selection.
+Cross-provider confirmation validates its owning draft/settings/tools/model.
+
+**One global generation still applies.** Other chats can be drafted, with
+a visible explanation and Show active chat button. This is B1, not full
+Batch B completion; concurrent generation/queueing and per-chat cancellation
+are B2. See `SESSION_STATE.md` for behavior and remaining manual UI checks.
+
+Verification: **303 unit tests passed (13 new); Release build succeeded;
+git diff --check clean.** XcodeGen regenerated the project. Final logs:
+`/tmp/ChatterBatSessionsTests.log`, `/tmp/ChatterBatSessionsRelease.log`.
+No paid API calls, interactive UI/IME/VoiceOver or XCUITest execution. Existing
+UI-test actor-isolation warnings remain. Inline approval layout, navigation,
+native picker and confirmation flows still need manual release verification.
+
+**B2 is now implemented; see the newer entry above.**
+
+## Workspace roadmap A3 — Capability filters and task presets (September 8, 2026)
+
+Implemented combinable Tool calling / Reasoning / Image understanding
+filters alongside provider, search and favorites controls. Recent and
+provider sections now share the same predicate as search. Added matching
+counts, Reset filters, a no-match state, and capability details distinguishing
+reported support, reported lack of support and unknown metadata. Selection,
+info and favorite are sibling buttons rather than nested buttons.
+
+Coding is explicitly a reasoning-based heuristic shortlist, with its
+requirement visibly checked/locked. Ideating and Historical references are
+guidance-only presets with no invented quality ranking. Web browsing and
+Image editing are labeled not available yet and show explanations, not
+false matches. Image input remains catalog metadata until attachments ship.
+Filters never change prompts, defaults, Auto's pool or tool permissions.
+
+Fixed OpenRouter partial/null/malformed capability fields being interpreted
+as unsupported; these now stay unknown. Valid explicit lists still yield
+supported/unsupported. No new provider fields, packages or schema changes.
+
+Verification: **290 unit tests passed (13 new); Release build succeeded;
+git diff --check clean.** XcodeGen regenerated the project. Logs:
+`/tmp/ChatterBatFiltersTests.log`, `/tmp/ChatterBatFiltersRelease.log`.
+No paid API calls, interactive UI/VoiceOver checks or XCUITest execution.
+Existing UI-test actor-isolation warnings remain. See `MODEL_FILTERS.md`
+for semantics and outstanding visual/accessibility checks (including the
+expanded 640 × 660 picker layout and independent row controls).
+
+**Follow-up B1 is implemented; B2 concurrency remains.** A1–A3 implementation
+is complete; manual release gates remain as documented.
+
+## Workspace roadmap A2 — Model bookmarks and saved defaults (September 8, 2026)
+
+Implemented the favorite-model bookmark bar, independent persistent new-chat
+pin, and explicit saved Auto policy. Click a chip to pin/select; click it
+again to return the default to Auto. Picker selection remains temporary;
+New Chat restores the default. Unavailable and unstarred pins remain visible
+and removable. Relaunch needs explicit Refresh/picker loading to resolve
+saved identities; there is no hidden network request or fallback.
+
+Auto setup now uses **Save Auto policy from current model**. Pinning another
+model or refreshing cannot change saved rate/privacy boundaries. Unknown
+prices, changed anchor privacy, missing/stale/failed catalogs block routing.
+Saved OpenRouter restrictions combine with stricter current settings and
+are applied to outgoing requests. Current selection is still app-wide,
+explicitly disclosed; session isolation is not included in this slice.
+
+Verification: **277 unit tests passed (17 new); Release build succeeded;
+git diff --check clean.** XcodeGen regenerated the project. Logs:
+`/tmp/ChatterBatBookmarksTests.log`, `/tmp/ChatterBatBookmarksRelease.log`.
+No paid API calls, interactive UI/VoiceOver checks, or XCUITest execution.
+No SwiftData schema or third-party dependencies changed. See
+`MODEL_BOOKMARKS.md` for usage, exact semantics and manual release checks.
+
+**Follow-up A3 is now implemented; see the newer entry above.**
+
+## Workspace roadmap A1 — Composer keyboard input (September 8, 2026)
+
+Implemented the first slice of `WORKSPACE_ROADMAP.md`; later batches are
+not implemented. `ComposerTextEditor` bridges a plain AppKit text view into
+the existing SwiftUI composer: Return sends, Shift+Return inserts a newline
+at the selection, and Command+Return sends while the editor is focused.
+Numeric-pad Enter also sends. Whitespace-only drafts, repeated send keys,
+disabled send state and noneditable input cannot submit. The editor grows
+to six lines before scrolling, supports native editing/undo, and exposes
+the Message accessibility label. No new packages, schema or API changes.
+
+Marked text is handed to native input handling for ordinary Return;
+Command+Return is consumed without sending or discarding a composition.
+The Send button no longer owns a window-level Command+Return shortcut,
+which could bypass that check. Mouse/accessible Send and Escape Stop remain.
+
+Verification: **260 unit tests passed (12 new); Release build succeeded;
+git diff --check clean.** New tests cover native keyboard event handlers,
+marked text, multiline insertion/binding, and a SwiftUI-hosted editor's
+height, accessibility label and editable-state updates. Logs:
+`/tmp/ChatterBatComposerTests.log`, `/tmp/ChatterBatComposerRelease.log`.
+No paid API calls or real credentials used. Existing UI-test actor-isolation
+warnings remain; this pass did not run the XCUITest target.
+
+Manual release checks still required (automated marked-text tests do not
+substitute for a physical input method): verify Japanese/Chinese candidate
+confirmation with Return, Shift+Return and Command+Return; keyboard focus,
+Tab/Shift+Tab and Escape; multiline paste/undo; six-line scrolling at narrow
+window widths; light/dark appearance and VoiceOver. This entry supersedes
+older composer Return-key caveats below, but not their other limitations.
+
+**Follow-up A2 is now implemented; see the newer entry above.**
+
+## Cost hygiene, value highlighting and local Auto (September 8, 2026)
+
+Implemented a reversible lean Venice prompt default, multi-event streaming
+usage accounting, draft-aware context estimates, sparse rainbow price
+outlines, and opt-in local 🤖 Auto using trusted favorites plus the selected
+model within service/privacy/listed-rate constraints. Shared session catalog
+includes freshness/error disclosure and explicit refresh. No persistence
+schema changes, paid router, or automatic history truncation.
+
+Verification: **248 unit tests passed; Release build succeeded**. No paid
+API calls, visual accessibility pass or distribution upload performed.
+See `COST_AND_AUTO.md` for rules, limitations and pre-TestFlight checklist.
+
 ## Last completed stage
 
 **Stage 7 — Permission-controlled agent beta (read-only tools).** Complete.
@@ -856,23 +1191,20 @@ build`) also succeeded with zero warnings.
 
 ## Known limitations
 
-1. **XCUITest target fails to load via `xcodebuild test` in this
-   environment.** Root cause confirmed via `codesign -dvvv`: with
-   automatic signing and no Xcode-managed developer account configured
-   non-interactively, the UI test runner and its `.xctest` bundle both
-   end up ad hoc-signed with `TeamIdentifier=not set`, and the OS
-   `dlopen` rejects loading it with a "different Team IDs" mapping error.
-   I attempted to force `DEVELOPMENT_TEAM = 9YQ3NRVHZX` (the one valid
-   local codesigning identity, `Apple Development: Jeremy Decarrier`) —
-   this then failed with "No Account for Team… Add a new account in
-   Accounts settings," confirming `xcodebuild` needs an Xcode
-   Accounts-signed-in session to provision automatically, which isn't
-   available non-interactively here. Reverted to plain ad hoc signing
-   (no `DEVELOPMENT_TEAM` override) since that's what correctly builds
-   and runs the app target itself. **Action for a human with Xcode UI
-   access:** sign in under Xcode → Settings → Accounts, then either let
-   Xcode auto-provision or run UI tests directly from within Xcode
-   (⌘U with the ChatterBat scheme).
+1. ~~XCUITest target fails to load via `xcodebuild test` in this
+   environment.~~ — **fixed, see Known Limitation 22.** Root cause was
+   confirmed via `codesign -dvvv`: with automatic signing and no
+   Xcode-managed developer account configured, the UI test runner and
+   its `.xctest` bundle both ended up ad hoc-signed with
+   `TeamIdentifier=not set`, and the OS `dlopen` rejected loading it
+   with a "different Team IDs" mapping error. Once an Apple ID was
+   signed into Xcode → Settings → Accounts on this machine and
+   `DEVELOPMENT_TEAM: "AM3FXP5BXT"` was set in `project.yml` (see
+   Known Limitation 22 and `docs/DECISIONS.md`), `xcodebuild test
+   -scheme ChatterBat -destination 'platform=macOS'` ran
+   `ChatterBatUITests.testAppLaunchesAndShowsSidebar` successfully —
+   confirmed passing alongside all 227 `ChatterBatTests`. Left here
+   (struck through) rather than deleted so the history stays legible.
 2. No visual/screenshot confirmation of the UI layout (see above).
 3. **Connection verification has not been exercised against the real
    Venice/OpenRouter APIs with a live key.** Per the testing contract,
@@ -1059,6 +1391,52 @@ build`) also succeeded with zero warnings.
     ever emits more than one function call despite
     `parallel_tool_calls: false`, whether some models refuse to use
     tools with no path argument at all — has not been observed.
+22. **Ad hoc code signing (no `DEVELOPMENT_TEAM`) caused two real,
+    reported user-facing problems and has now been fixed — read this
+    before touching `project.yml`'s signing settings again.** First
+    manual end-to-end run-through of the built app (post-Stage-7)
+    surfaced: (a) creating a new conversation crashed with
+    `EXC_BREAKPOINT` inside `SwiftDataConversationRepository.
+    createConversation`'s `context.insert`/`context.save` — but *only*
+    when launched via Xcode's own Run/Debug (⌘R), which attaches
+    LLDB; a plain `xcodebuild build` + `open ChatterBat.app` launch (no
+    debugger) never crashed, and neither did the exact same
+    `context.insert`/`context.save` code extracted into a standalone
+    CLI binary run directly against a copy of the real on-disk store.
+    Running that identical CLI binary under `lldb` reproduced an
+    indefinite hang on the same call — consistent with the SwiftData +
+    debugger-instrumentation class of bug already documented in this
+    stage's crash story above, just triggered by a different code path
+    (`insert`/`save` during interactive use, rather than construction
+    during test-runner instrumentation). **This means EXC_BREAKPOINT
+    on this toolchain when running via Xcode's debugger is not
+    necessarily a new regression — always try a debugger-less launch
+    (Build-only, then open the built `.app` directly) before assuming
+    the persistence code itself is broken.** (b) the user reported
+    needing to repaste their Venice/OpenRouter API keys after every
+    relaunch during development. Root cause, confirmed via `codesign
+    -dvvv` across consecutive clean rebuilds: ad hoc-signed builds get
+    `TeamIdentifier=not set` and a *different* CDHash every single
+    build. Since the app is sandboxed
+    (`com.apple.security.app-sandbox`), Keychain's per-app access
+    control is anchored to the app's code identity, so a build with no
+    stable team identity can lose access to Keychain items it
+    previously saved as soon as it's rebuilt. Fix (see
+    `docs/DECISIONS.md`'s updated Stage 0 entry): once an Apple ID was
+    signed into Xcode → Settings → Accounts on this machine,
+    `DEVELOPMENT_TEAM: "AM3FXP5BXT"` was added to `project.yml`
+    (`CODE_SIGN_STYLE` stays `Automatic`); confirmed
+    `TeamIdentifier=AM3FXP5BXT` is now identical across multiple
+    consecutive clean rebuilds, both via `xcodebuild` and via Xcode's
+    own Build/Run. **Action for a human on a different machine:** this
+    exact team ID (`AM3FXP5BXT`) is specific to the Apple ID signed
+    into Xcode on this machine — on a fresh machine, sign into Xcode →
+    Settings → Accounts first, then update `DEVELOPMENT_TEAM` in
+    `project.yml` to that machine's own team ID (visible under Xcode →
+    Settings → Accounts, or in `security find-identity -v
+    -p codesigning`/existing `.mobileprovision` files under
+    `~/Library/Developer/Xcode/UserData/Provisioning Profiles`), then
+    re-run `xcodegen generate`.
 
 ## Next small task
 

@@ -15,6 +15,7 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     SWIFT_VERSION: "6.0"
     CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: "AM3FXP5BXT"
     ENABLE_HARDENED_RUNTIME: YES
   configs:
     Debug:
@@ -30,6 +31,8 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: ChatterBat
+        excludes:
+          - App/ChatterBatIOSApp.swift
     settings:
       base:
         PRODUCT_NAME: ChatterBat
@@ -41,6 +44,33 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         CODE_SIGN_ENTITLEMENTS: ChatterBat/Resources/ChatterBat.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  ChatterBatIOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ChatterBat
+        excludes:
+          - App/ChatterBatApp.swift
+          - Features/Root/WorkspacePreviewView.swift
+          - Domain/WorkspacePermissionPolicy.swift
+          - Services/Agent/WorkspaceApprovalLedger.swift
+          - Services/Agent/WorkspaceReadAccess.swift
+          - Services/Agent/WorkspaceReadRegistry.swift
+          - Services/Agent/WorkspaceReadWorker.swift
+    settings:
+      base:
+        PRODUCT_NAME: ChatterBat
+        PRODUCT_BUNDLE_IDENTIFIER: com.chatterbat.ios
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: ChatterBat
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 ChatterBat"
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIconIOS
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
 
   ChatterBatTests:
@@ -72,7 +102,179 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.chatterbat.uitests
         TEST_TARGET_NAME: ChatterBat
 
+  ChatterBatWorkspaceGrantProbe:
+    type: application
+    platform: macOS
+    sources:
+      - path: WorkspaceGrantProbe
+        excludes: [Probe.entitlements]
+      - path: ChatterBat/Domain/WorkspacePermissionPolicy.swift
+      - path: ChatterBat/Services/Agent/WorkspaceApprovalLedger.swift
+      - path: ChatterBat/Services/Agent/WorkspaceReadAccess.swift
+      - path: ChatterBat/Services/Agent/WorkspaceReadRegistry.swift
+      - path: ChatterBat/Services/Agent/WorkspaceReadWorker.swift
+      - path: ChatterBat/Features/Chat/WorkspacePreviewModel.swift
+      - path: ChatterBat/Features/Root/WorkspacePreviewView.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chatterbat.workspacegrantprobe
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: WorkspaceGrantProbe/Probe.entitlements
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        SKIP_INSTALL: YES
+
+  ChatterBatIPCProbeService:
+    type: xpc-service
+    platform: macOS
+    sources:
+      - path: IPCProbe/Shared
+      - path: IPCProbe/Service
+        excludes: [Info.plist]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chatterbat.ipcprobe.service
+        INFOPLIST_FILE: IPCProbe/Service/Info.plist
+        CODE_SIGN_ENTITLEMENTS: IPCProbe/Probe.entitlements
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        SKIP_INSTALL: YES
+
+  ChatterBatIPCProbe:
+    type: application
+    platform: macOS
+    sources:
+      - path: IPCProbe/Shared
+      - path: IPCProbe/Client
+    dependencies:
+      - target: ChatterBatIPCProbeService
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chatterbat.ipcprobe
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        CODE_SIGN_ENTITLEMENTS: IPCProbe/Probe.entitlements
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        SKIP_INSTALL: YES
+
+  ChatterBatIPCRejectedProbe:
+    type: application
+    platform: macOS
+    sources:
+      - path: IPCProbe/Shared
+      - path: IPCProbe/Client
+    dependencies:
+      - target: ChatterBatIPCProbeService
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chatterbat.ipcprobe.rejected
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        CODE_SIGN_ENTITLEMENTS: IPCProbe/Probe.entitlements
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        SKIP_INSTALL: YES
+
+  ChatterBatIPCProbeHost:
+    type: tool
+    platform: macOS
+    sources:
+      - path: IPCProbe/Shared
+      - path: IPCProbe/Service
+        excludes: [Info.plist]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chatterbat.ipcprobe.host
+        OTHER_CODE_SIGN_FLAGS: "$(inherited) --identifier com.chatterbat.ipcprobe.host"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) HOST_PROBE"
+        CODE_SIGN_ENTITLEMENTS: IPCProbe/StandaloneHost.entitlements
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        SKIP_INSTALL: YES
+
+  ChatterBatIPCProbeCLI:
+    type: tool
+    platform: macOS
+    sources:
+      - path: IPCProbe/Shared
+      - path: IPCProbe/Client
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chatterbat.ipcprobe.cli
+        OTHER_CODE_SIGN_FLAGS: "$(inherited) --identifier com.chatterbat.ipcprobe.cli"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) STANDALONE_PROBE"
+        CODE_SIGN_ENTITLEMENTS: IPCProbe/StandaloneHost.entitlements
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        SKIP_INSTALL: YES
+
+  ChatterBatIPCStandaloneProbe:
+    type: application
+    platform: macOS
+    sources:
+      - path: IPCProbe/Shared
+      - path: IPCProbe/Client
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chatterbat.ipcprobe.standalone
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) STANDALONE_PROBE"
+        CODE_SIGN_ENTITLEMENTS: IPCProbe/StandaloneClient.entitlements
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        SKIP_INSTALL: YES
+
+  ChatterBatIPCStandaloneRejectedProbe:
+    type: application
+    platform: macOS
+    sources:
+      - path: IPCProbe/Shared
+      - path: IPCProbe/Client
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chatterbat.ipcprobe.standalone.rejected
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) STANDALONE_PROBE"
+        CODE_SIGN_ENTITLEMENTS: IPCProbe/StandaloneClient.entitlements
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        SKIP_INSTALL: YES
+
+  ChatterBatIPCProbeTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: IPCProbe/Shared
+      - path: IPCProbe/Tests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chatterbat.ipcprobe.tests
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
+  ChatterBatWorkspaceGrantProbe:
+    build:
+      targets:
+        ChatterBatWorkspaceGrantProbe: all
+  ChatterBatIPCStandaloneProbe:
+    build:
+      targets:
+        ChatterBatIPCProbeHost: all
+        ChatterBatIPCProbeCLI: all
+        ChatterBatIPCStandaloneProbe: all
+        ChatterBatIPCStandaloneRejectedProbe: all
+        ChatterBatIPCProbeTests: [test]
+    test:
+      config: Debug
+      targets:
+        - ChatterBatIPCProbeTests
+  ChatterBatIPCProbe:
+    build:
+      targets:
+        ChatterBatIPCProbe: all
+        ChatterBatIPCRejectedProbe: all
+        ChatterBatIPCProbeTests: [test]
+    test:
+      config: Debug
+      targets:
+        - ChatterBatIPCProbeTests
   ChatterBat:
     build:
       targets:
@@ -86,5 +288,13 @@ schemes:
       targets:
         - ChatterBatTests
         - ChatterBatUITests
+    archive:
+      config: Release
+  ChatterBatIOS:
+    build:
+      targets:
+        ChatterBatIOS: all
+    run:
+      config: Debug
     archive:
       config: Release

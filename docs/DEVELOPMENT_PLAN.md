@@ -1,5 +1,16 @@
 # ChatterBat Development Plan
 
+## September 8, 2026 scope extension
+
+The approved [workspace and coding roadmap](WORKSPACE_ROADMAP.md) is the
+current forward plan: desktop usability, isolated concurrent sessions,
+workspace-aware coding/CLI, persistent Mac host, then a separate iOS app.
+Its explicit batches supersede the corresponding future-scope exclusions
+below. The original stages remain historical context. Safety/testing rules
+and one validated implementation slice at a time still apply. B2 supersedes
+the old one-global-generation constraint with bounded per-chat execution;
+see `CONCURRENT_CHATS.md` for queue, cancellation and recovery semantics.
+
 This is the condensed, working reference for the staged build-out. The full
 original brief (product intent, UX spec, provider integration requirements,
 testing contract, and reusable agent prompts) is the authoritative source;
@@ -51,7 +62,8 @@ before the next stage begins. Do not implement multiple stages in one pass.
 - Stop/cancel must cancel the actual network task; explain that local
   cancellation doesn't guarantee upstream billing stopped.
 - No automatic retries of billable chat POSTs after ambiguous failures.
-- One active generation globally in the MVP (documented in UI, not hidden).
+- Original MVP: one active generation globally. Superseded by B2's bounded
+  per-conversation execution; never admit duplicate turns to the same chat.
 
 ## Key references
 

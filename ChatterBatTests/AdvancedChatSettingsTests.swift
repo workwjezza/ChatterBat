@@ -19,11 +19,19 @@ final class AdvancedChatSettingsTests: XCTestCase {
         )
     }
 
-    func testDefaultSettingsAreAllNoOpValues() {
+    func testDefaultSettingsUseLeanPromptAndDefaultReasoningAndRouting() {
         let settings = AdvancedChatSettings()
         XCTAssertNil(settings.reasoningEffort)
         XCTAssertEqual(settings.venice, VeniceAdvancedSettings())
+        XCTAssertFalse(settings.venice.includeSystemPrompt)
         XCTAssertEqual(settings.openRouterRouting, OpenRouterRoutingPreferences())
+    }
+
+    func testPromptPreferenceSurvivesUnknownReasoningCapability() {
+        let settings = AdvancedChatSettings(venice: VeniceAdvancedSettings(disableThinking: true, includeSystemPrompt: true))
+        let applicable = settings.applicable(to: makeModel(service: .venice))
+        XCTAssertTrue(applicable.venice.includeSystemPrompt)
+        XCTAssertFalse(applicable.venice.disableThinking)
     }
 
     func testReasoningEffortDroppedWhenModelDoesNotSupportReasoning() {

@@ -33,10 +33,8 @@ extension ChatStreamingClient {
     }
 
     /// Convenience overload for call sites (and Stage 0–5 tests) that
-    /// don't need to pass advanced settings — defaults to the all-no-op
-    /// `AdvancedChatSettings()`, which never changes the resulting
-    /// request body. Added in Stage 6 so no pre-existing call site had
-    /// to be touched.
+    /// don't need to pass advanced settings. Uses the current defaults,
+    /// including Venice's lean prompt opt-out.
     func streamChatCompletion(
         apiKey: String,
         modelID: String,
@@ -129,17 +127,18 @@ struct StandardChatStreamingClient: ChatStreamingClient {
 
         for try await chunk in byteStream {
             for event in parser.feed(chunk) {
-                guard let decoded = ChatStreamDecoder.decode(event.data) else { continue }
-                switch decoded {
-                case .streamError(let message):
-                    didThrowStreamError = true
-                    continuation.yield(.streamError(message))
-                    throw ChatRequestError.streamError(message)
-                case .finished, .usage:
-                    observedFinishOrUsage = true
-                    continuation.yield(decoded)
-                case .contentDelta, .ignorable, .toolCallDelta:
-                    continuation.yield(decoded)
+                for decoded in ChatStreamDecoder.decodeEvents(event.data) {
+                    switch decoded {
+                    case .streamError(let message):
+                        didThrowStreamError = true
+                        continuation.yield(.streamError(message))
+                        throw ChatRequestError.streamError(message)
+                    case .finished, .usage:
+                        observedFinishOrUsage = true
+                        continuation.yield(decoded)
+                    case .contentDelta, .ignorable, .toolCallDelta:
+                        continuation.yield(decoded)
+                    }
                 }
             }
         }

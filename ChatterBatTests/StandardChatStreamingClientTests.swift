@@ -42,6 +42,16 @@ final class StandardChatStreamingClientTests: XCTestCase {
         ])
     }
 
+    func testCombinedFinalFrameReachesStreamingConsumerWithoutLosingUsage() async throws {
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"total_tokens\":15},\"cost\":{\"usd\":0.01}}\n\n"
+        let http = FakeStreamingHTTPClient(statusCode: 200, chunks: [Data(sse.utf8)])
+        let client = StandardChatStreamingClient(service: .venice, httpClient: http,
+                                                endpointURL: URL(string: "https://api.venice.ai/api/v1/chat/completions")!)
+        let events = try await collect(client.streamChatCompletion(apiKey: "fake", modelID: "test", messages: []))
+        XCTAssertEqual(events, [.contentDelta("Hi"), .finished(reason: "stop"),
+                                .usage(ChatUsage(promptTokens: nil, completionTokens: nil, totalTokens: 15, costUSD: Decimal(string: "0.01")))])
+    }
+
     func testFragmentedChunksAcrossMultipleNetworkReadsStillDecodeCorrectly() async throws {
         let fullSSE = """
         data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}
@@ -144,6 +154,45 @@ final class StandardChatStreamingClientTests: XCTestCase {
             XCTFail("Expected an error to be thrown")
         } catch let error as ChatRequestError {
             XCTAssertEqual(error, .invalidCredential)
+        }
+    }
+
+    func testUnexpectedHTTP200BodyFailsGracefullyForBothProviders() async throws {
+        for service in AIService.allCases {
+            for body in ["<html>Upstream unavailable</html>", "data: not-json\n\n", "data: {\"choices\":42}\n\n"] {
+                let http = FakeStreamingHTTPClient(statusCode: 200, chunks: [Data(body.utf8)])
+                let client = StandardChatStreamingClient(
+                    service: service,
+                    httpClient: http,
+                    endpointURL: URL(string: "https://\(service.apiHost)/test")!
+                )
+
+                do {
+                    _ = try await collect(client.streamChatCompletion(apiKey: "key", modelID: "model", messages: []))
+                    XCTFail("An unexpected body must not be reported as a successful completion.")
+                } catch let error as ChatRequestError {
+                    XCTAssertEqual(error, .prematureDisconnect)
+                    XCTAssertFalse(error.userMessage.isEmpty)
+                }
+            }
+        }
+    }
+
+    func testNonJSONProviderFailureHasActionableFallbackForBothProviders() async throws {
+        for service in AIService.allCases {
+            let http = FakeStreamingHTTPClient(statusCode: 503, chunks: [Data("<html>Unavailable</html>".utf8)])
+            let client = StandardChatStreamingClient(
+                service: service,
+                httpClient: http,
+                endpointURL: URL(string: "https://\(service.apiHost)/test")!
+            )
+
+            do {
+                _ = try await collect(client.streamChatCompletion(apiKey: "key", modelID: "model", messages: []))
+                XCTFail("Expected a provider error.")
+            } catch let error as ChatRequestError {
+                XCTAssertEqual(error, .providerFailure("The provider is temporarily unavailable (503)."))
+            }
         }
     }
 

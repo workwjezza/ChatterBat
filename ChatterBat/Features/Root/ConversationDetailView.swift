@@ -8,19 +8,25 @@ import SwiftUI
 /// Markdown/code-block rendering and copy actions are Stage 5.
 struct ConversationDetailView: View {
     let conversation: Conversation
-    // @Bindable (rather than a plain `var`) so `AdvancedSettingsView`'s
-    // `$viewModel.advancedChatSettings` binding below can write back
-    // to the shared view model — needed as of Stage 6; earlier stages
-    // only ever read from `viewModel`.
     @Bindable var viewModel: AppViewModel
+    @Bindable var session: ConversationSessionState
     var coordinator: ChatCoordinator
+    var modelCatalog: ModelPickerViewModel? = nil
 
-    @State private var draftText = ""
     @State private var pendingServiceSwitchModel: ModelInfo?
+    @State private var pendingServiceSwitchSettings = AdvancedChatSettings()
+    @State private var pendingServiceSwitchDraft = ""
+    @State private var pendingServiceSwitchTools: [AgentTool] = []
     @State private var isAdvancedSettingsPresented = false
+    @State private var isWorkspacePresented = false
+    @State private var autoError: String?
 
     var body: some View {
         VStack(spacing: 0) {
+            if let modelCatalog {
+                ModelBookmarkBar(viewModel: viewModel, catalog: modelCatalog,
+                                 isBusy: isGeneratingHere)
+            }
             TranscriptView(
                 messages: coordinator.messages(for: conversation.id),
                 contextBoundaryMessageID: coordinator.contextBoundaryMessageID(for: conversation.id),
@@ -31,16 +37,67 @@ struct ConversationDetailView: View {
 
             Divider()
 
+            if let invocation = coordinator.pendingToolApproval(for: conversation.id) {
+                AgentToolApprovalView(
+                    invocation: invocation,
+                    onApprove: { coordinator.respondToToolApproval(in: conversation.id, approve: true, expectedToolCallID: invocation.toolCallID) },
+                    onDeny: { coordinator.respondToToolApproval(in: conversation.id, approve: false, expectedToolCallID: invocation.toolCallID) }
+                )
+                .id(invocation.toolCallID)
+            }
+
+            if let position = coordinator.queuePosition(for: conversation.id) {
+                Text("Queued · position \(position). No provider request has started. Stop removes this queued turn.")
+                    .font(.caption).padding(.horizontal)
+            } else if isGeneratingHere {
+                Text(coordinator.state(for: conversation.id).title).font(.caption)
+            } else if coordinator.activeTurnCount >= coordinator.maxConcurrentTurns {
+                Text(coordinator.canAcceptTurn
+                     ? "All execution slots are occupied. Send will queue this chat (up to \(coordinator.maxQueuedTurns) waiting)."
+                     : "The queue is full. Your draft is preserved; wait or stop another chat.")
+                    .font(.caption).padding(.horizontal)
+            }
+
+            if session.autoModeEnabled && !isGeneratingHere {
+                let decision = autoDecision
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(decision?.model.map { "🤖 Auto → \($0.displayName) · \($0.service.displayName)" } ?? "🤖 Auto needs attention")
+                        .font(.caption)
+                    Text(decision?.explanation ?? "Choose a model in the picker first.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
+
             ComposerView(
-                text: $draftText,
+                text: $session.draftText,
                 isGenerating: isGeneratingHere,
                 canSend: canSend,
-                hasSelectedModel: viewModel.selectedModel != nil,
+                hasSelectedModel: session.selectedModel != nil,
                 onSend: attemptSend,
-                onStop: coordinator.stopGeneration
+                onStop: {
+                    coordinator.stopGeneration(in: conversation.id)
+                },
+                willQueue: coordinator.activeTurnCount >= coordinator.maxConcurrentTurns
             )
+            Text("Draft and chat settings stay with this chat until app quit. Transcript history is saved.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+                .padding(.bottom, 6)
         }
         .toolbar {
+            #if os(macOS)
+            ToolbarItem {
+                Button("Workspace", systemImage: "folder") { isWorkspacePresented = true }
+                    .help("Local read-only workspace preview; nothing is sent to models")
+                    .popover(isPresented: $isWorkspacePresented) {
+                        WorkspacePreviewView(model: session.workspacePreview)
+                    }
+            }
             ToolbarItem(placement: .principal) {
                 Button {
                     viewModel.isModelPickerPresented = true
@@ -50,8 +107,21 @@ struct ConversationDetailView: View {
                 .keyboardShortcut("k", modifiers: .command)
                 .help("Choose a model (⌘K)")
                 .disabled(isGeneratingHere)
-                .accessibilityLabel(viewModel.selectedModel == nil ? "Select a model" : "Model: \(modelButtonTitle)")
+                .accessibilityLabel(session.selectedModel == nil ? "Select a model" : "Model: \(modelButtonTitle)")
                 .accessibilityHint("Opens the model picker")
+            }
+            ToolbarItem {
+                Toggle(isOn: Binding(get: { session.autoModeEnabled }, set: {
+                    guard viewModel.selectedConversationID == conversation.id else { return }
+                    viewModel.setCurrentAutoEnabled($0, isBusy: isGeneratingHere)
+                })) {
+                    Text("🤖")
+                }
+                .toggleStyle(.button)
+                .disabled(isGeneratingHere)
+                .accessibilityLabel("Auto model selection")
+                .accessibilityValue(session.autoModeEnabled ? "On" : "Off")
+                .help("Auto uses this chat's policy snapshot. Saving a policy in another chat never changes it.")
             }
             ToolbarItem {
                 Button {
@@ -63,41 +133,28 @@ struct ConversationDetailView: View {
                 .accessibilityLabel("Advanced chat settings")
                 .popover(isPresented: $isAdvancedSettingsPresented) {
                     AdvancedSettingsView(
-                        settings: $viewModel.advancedChatSettings,
-                        model: viewModel.selectedModel,
-                        contextUsage: viewModel.selectedModel.map {
-                            coordinator.contextUsageEstimate(for: conversation.id, model: $0)
+                        settings: $session.advancedChatSettings,
+                        model: session.selectedModel,
+                        contextUsage: session.selectedModel.map {
+                            coordinator.contextUsageEstimate(for: conversation.id, model: $0, draft: session.draftText)
                         },
                         hasContextBoundary: coordinator.contextBoundaryMessageID(for: conversation.id) != nil,
                         onClearContextBoundary: {
                             coordinator.setContextBoundary(nil, in: conversation.id)
                         },
-                        agentToolsEnabled: $viewModel.agentToolsEnabled
+                        agentToolsEnabled: $session.agentToolsEnabled
                     )
+                    .disabled(isGeneratingHere)
                 }
             }
+            #endif
         }
-        .sheet(item: Binding(
-            get: { coordinator.pendingToolApproval(for: conversation.id) },
-            set: { newValue in
-                // Only denies if a decision genuinely hasn't already
-                // been made — Approve/Deny inside the sheet resolve
-                // the pending call directly via ChatCoordinator, which
-                // is what actually clears `pendingToolApproval` and
-                // lets SwiftUI dismiss this sheet on its own; this
-                // guard exists purely so an unexpected dismissal
-                // (e.g. the window closing) never leaves a tool call
-                // silently unresolved.
-                if newValue == nil && coordinator.pendingToolApproval(for: conversation.id) != nil {
-                    coordinator.respondToToolApproval(in: conversation.id, approve: false)
-                }
-            }
-        )) { invocation in
-            AgentToolApprovalView(
-                invocation: invocation,
-                onApprove: { coordinator.respondToToolApproval(in: conversation.id, approve: true) },
-                onDeny: { coordinator.respondToToolApproval(in: conversation.id, approve: false) }
-            )
+        .alert("Auto selection unavailable", isPresented: Binding(
+            get: { autoError != nil }, set: { if !$0 { autoError = nil } }
+        )) {
+            Button("OK") { autoError = nil }
+        } message: {
+            Text(autoError ?? "")
         }
         .alert(
             "Share history with \(pendingServiceSwitchModel?.service.displayName ?? "")?",
@@ -109,14 +166,31 @@ struct ConversationDetailView: View {
             Button("Cancel", role: .cancel) { pendingServiceSwitchModel = nil }
             Button("Send") {
                 if let model = pendingServiceSwitchModel {
-                    coordinator.send(
-                        text: draftText,
+                    guard viewModel.selectedConversationID == conversation.id,
+                          !isGeneratingHere, coordinator.canAcceptTurn,
+                          session.draftText == pendingServiceSwitchDraft,
+                          session.toolsToOffer == pendingServiceSwitchTools,
+                          session.effectiveChatSettings == pendingServiceSwitchSettings,
+                          session.autoModeEnabled || session.selectedModel?.identity == model.identity else {
+                        pendingServiceSwitchModel = nil
+                        return
+                    }
+                    // Confirmation may stay open past the catalog freshness
+                    // window. Never send a now-ineligible Auto candidate.
+                    if session.autoModeEnabled && autoDecision?.model?.identity != model.identity {
+                        pendingServiceSwitchModel = nil
+                        autoError = "Auto's candidate changed or became unavailable. Refresh models and send again."
+                        return
+                    }
+                    let accepted = coordinator.send(
+                        text: pendingServiceSwitchDraft,
                         in: conversation.id,
                         using: model,
-                        settings: viewModel.advancedChatSettings,
-                        tools: viewModel.toolsToOffer
+                        settings: pendingServiceSwitchSettings,
+                        tools: pendingServiceSwitchTools,
+                        validateBeforeStart: startValidator(for: model)
                     )
-                    draftText = ""
+                    if accepted { session.draftText = "" }
                 }
                 pendingServiceSwitchModel = nil
             }
@@ -126,43 +200,83 @@ struct ConversationDetailView: View {
                 "Sending now will share that history with \(pendingServiceSwitchModel?.service.displayName ?? "this service") too."
             )
         }
-        .onChange(of: coordinator.messages(for: conversation.id)) { _, _ in
-            // Keeps the sidebar's preview/updatedAt in sync as messages
-            // are appended/checkpointed, without the sidebar needing to
-            // poll or duplicate ChatCoordinator's persistence logic.
-            viewModel.refreshConversationMetadata(conversationID: conversation.id)
-        }
     }
 
     private var isGeneratingHere: Bool {
-        coordinator.generationState.activeConversationID == conversation.id
+        coordinator.isBusy(conversation.id)
     }
 
     private var canSend: Bool {
-        guard case .idle = coordinator.generationState else { return false }
-        guard viewModel.selectedModel != nil else { return false }
-        return !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !isGeneratingHere, coordinator.canAcceptTurn else { return false }
+        guard session.selectedModel != nil else { return false }
+        return !session.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var modelButtonTitle: String {
-        guard let model = viewModel.selectedModel else { return "Select Model" }
-        return "\(model.displayName) · \(model.service.displayName)"
+        guard let model = session.selectedModel else { return "Select Model" }
+        let prefix = session.autoModeEnabled ? "Chat Auto anchor: " : ""
+        return "\(prefix)\(model.displayName) · \(model.service.displayName)"
     }
 
     private func attemptSend() {
-        guard let model = viewModel.selectedModel else { return }
+        guard viewModel.selectedConversationID == conversation.id,
+              !isGeneratingHere, coordinator.canAcceptTurn,
+              let selected = session.selectedModel else { return }
+        let model: ModelInfo
+        if session.autoModeEnabled {
+            guard let decision = autoDecision, let routed = decision.model else {
+                autoError = autoDecision?.explanation ?? "Open the model picker first."
+                return
+            }
+            model = routed
+        } else {
+            model = selected
+        }
         if coordinator.wouldShareHistoryAcrossServices(conversationID: conversation.id, nextService: model.service) {
+            pendingServiceSwitchSettings = session.effectiveChatSettings
+            pendingServiceSwitchDraft = session.draftText
+            pendingServiceSwitchTools = session.toolsToOffer
             pendingServiceSwitchModel = model
             return
         }
-        coordinator.send(
-            text: draftText,
+        let accepted = coordinator.send(
+            text: session.draftText,
             in: conversation.id,
             using: model,
-            settings: viewModel.advancedChatSettings,
-            tools: viewModel.toolsToOffer
+            settings: session.effectiveChatSettings,
+            tools: session.toolsToOffer,
+            validateBeforeStart: startValidator(for: model)
         )
-        draftText = ""
+        if accepted { session.draftText = "" }
+    }
+
+    /// Capture consent and routing inputs, not the view/draft that may change
+    /// while waiting. Failure at dispatch is visible and never auto-retried.
+    private func startValidator(for model: ModelInfo) -> (@MainActor () -> String?)? {
+        guard session.autoModeEnabled else { return nil }
+        guard let policy = session.autoPolicy, let catalog = modelCatalog else {
+            return { "Auto policy unavailable. Configure Auto and send again." }
+        }
+        let prompt = session.draftText
+        let context = coordinator.autoRoutingContext(for: conversation.id, draft: prompt)
+        let settings = session.advancedChatSettings
+        let tools = session.agentToolsEnabled
+        return {
+            let decision = catalog.autoDecision(prompt: prompt, recent: context.recent, requiredContext: context.required,
+                                                policy: policy, requiresTools: tools, settings: settings)
+            return decision.model?.identity == model.identity ? nil
+                : "Queued Auto choice expired or changed. Refresh models and explicitly send again. No request was made."
+        }
+    }
+
+    private var autoDecision: AutoModelDecision? {
+        guard session.autoModeEnabled, let policy = session.autoPolicy,
+              let modelCatalog else { return nil }
+        let context = coordinator.autoRoutingContext(for: conversation.id, draft: session.draftText)
+        return modelCatalog.autoDecision(prompt: session.draftText, recent: context.recent,
+                                         requiredContext: context.required, policy: policy,
+                                         requiresTools: session.agentToolsEnabled,
+                                         settings: session.advancedChatSettings)
     }
 }
 
@@ -170,6 +284,7 @@ struct ConversationDetailView: View {
     ConversationDetailView(
         conversation: DemoFixtures.conversations[0],
         viewModel: AppViewModel(),
+        session: ConversationSessionState(),
         coordinator: ChatCoordinator(credentialStore: PreviewCoordinatorStore(), clients: [:])
     )
 }

@@ -27,7 +27,7 @@ enum ReasoningEffort: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// Venice-only advanced controls, sent inside the `venice_parameters`
-/// request object. Both fields are documented booleans on Venice's
+/// request object. These fields are documented booleans on Venice's
 /// chat completions endpoint (`venice_parameters.disable_thinking`,
 /// `venice_parameters.strip_thinking_response`) — see
 /// docs/DECISIONS.md. Never sent to OpenRouter.
@@ -39,6 +39,9 @@ struct VeniceAdvancedSettings: Equatable, Sendable {
     /// can still think internally while having the trace stripped from
     /// what's returned.
     var stripThinkingResponse: Bool = false
+    /// Opt out of provider-added instructions by default, without changing
+    /// saved history. Independent of the model's reasoning capability.
+    var includeSystemPrompt: Bool = false
 }
 
 /// Whether OpenRouter may route a request to providers that store
@@ -78,9 +81,8 @@ struct OpenRouterRoutingPreferences: Equatable, Sendable {
 }
 
 /// The full set of advanced, per-send chat settings a user can opt
-/// into. Mirrors the brief's "advanced controls must stay hidden by
-/// default" requirement: every field defaults to a value that changes
-/// nothing about the request that would otherwise be sent.
+/// into. Reasoning/routing retain provider defaults; Venice's additional
+/// system prompt is explicitly disabled by default to reduce overhead.
 struct AdvancedChatSettings: Equatable, Sendable {
     /// `nil` means "don't send `reasoning_effort` at all" — never
     /// defaults to a non-nil value, since sending it to a model that
@@ -101,7 +103,7 @@ struct AdvancedChatSettings: Equatable, Sendable {
     }
 
     /// Returns a copy with every field that doesn't apply to `model`
-    /// reset to its no-op default, so a caller can safely build a
+    /// reset to its default, so a caller can safely build a
     /// request from the result without re-checking capabilities itself.
     ///
     /// This is the single place "capability-aware" gating happens —
@@ -117,7 +119,8 @@ struct AdvancedChatSettings: Equatable, Sendable {
         var result = self
         if model.supportsReasoning != .supported {
             result.reasoningEffort = nil
-            result.venice = VeniceAdvancedSettings()
+            result.venice.disableThinking = false
+            result.venice.stripThinkingResponse = false
         }
         if model.service != .venice {
             result.venice = VeniceAdvancedSettings()

@@ -45,6 +45,28 @@ final class ChatCoordinatorPersistenceTests: XCTestCase {
     }
 
     @MainActor
+    func testSplitUsageAndCostFramesPersistWithoutLosingCounts() async throws {
+        let store = InMemoryCredentialStore()
+        try store.saveKey("fake", for: .venice)
+        let repository = InMemoryConversationRepository()
+        let conversation = try repository.createConversation(title: "Accounting")
+        let counts = ChatUsage(promptTokens: 10, completionTokens: 5, totalTokens: 15)
+        let client = FakeChatStreamingClient(service: .venice, scriptedEvents: [
+            .contentDelta("Answer"), .usage(counts),
+            .usage(ChatUsage(promptTokens: nil, completionTokens: nil, totalTokens: nil, costUSD: Decimal(string: "0.01"))),
+            .usage(counts), .finished(reason: "stop")
+        ])
+        let coordinator = ChatCoordinator(credentialStore: store, clients: [.venice: client], repository: repository)
+        coordinator.send(text: "Question", in: conversation.id, using: makeModel(service: .venice))
+        await waitUntil { coordinator.generationState == .idle }
+        let restored = ChatCoordinator(credentialStore: store, clients: [.venice: client], repository: repository)
+        let usage = restored.messages(for: conversation.id).last?.usage
+        XCTAssertEqual(usage?.totalTokens, 15)
+        XCTAssertEqual(usage?.costUSD, Decimal(string: "0.01"))
+        XCTAssertEqual(client.streamCallCount, 1)
+    }
+
+    @MainActor
     func testCheckpointIntervalOfOneWritesEveryDelta() async throws {
         let store = InMemoryCredentialStore()
         try store.saveKey("key", for: .venice)

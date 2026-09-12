@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The Stage 7 permission sheet: shown for every single agent-tool
+/// Conversation-local permission card: shown for every single agent-tool
 /// invocation before it runs, never auto-approved.
 ///
 /// Deliberately shows exactly three pieces of information and nothing
@@ -50,12 +50,10 @@ struct AgentToolApprovalView: View {
                     hasDecided = true
                     onDeny()
                 }
-                .keyboardShortcut(.cancelAction)
                 Button("Approve…") {
                     hasDecided = true
                     onApprove()
                 }
-                .keyboardShortcut(.defaultAction)
             }
             .disabled(hasDecided)
         }

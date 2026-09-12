@@ -6,7 +6,7 @@ import Foundation
 /// Per the brief: "Model identity is the pair (service, modelID). Never
 /// merge models just because their names look alike." Two models with the
 /// same display name on different services are always distinct.
-struct ModelIdentity: Hashable, Sendable {
+struct ModelIdentity: Hashable, Sendable, Codable {
     let service: AIService
     let modelID: String
 }

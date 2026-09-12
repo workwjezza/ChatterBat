@@ -33,6 +33,14 @@ struct AdvancedSettingsView: View {
     var body: some View {
         Form {
             if let model {
+                if model.service == .venice {
+                    Section("Venice Prompt") {
+                        Toggle("Include Venice’s system instructions", isOn: $settings.venice.includeSystemPrompt)
+                        Text("Off reduces provider-added prompt overhead. Saved chats and conversation context are unchanged. Turning this on may change the assistant’s style.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 if model.supportsReasoning == .supported {
                     Section("Reasoning") {
                         Picker("Effort", selection: $settings.reasoningEffort) {
@@ -44,6 +52,9 @@ struct AdvancedSettingsView: View {
                         if model.service == .venice {
                             Toggle("Disable thinking", isOn: $settings.venice.disableThinking)
                             Toggle("Hide thinking from response", isOn: $settings.venice.stripThinkingResponse)
+                            Text("Hiding thinking does not prevent reasoning-token charges.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 } else if model.supportsReasoning == .unknown {
@@ -93,6 +104,9 @@ struct AdvancedSettingsView: View {
             }
 
             Section("Context") {
+                Text("Estimate includes the draft and eligible message text, not provider instructions or tool definitions. Actual billed usage is reported after the response.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 if let contextUsage {
                     contextUsageRow(contextUsage)
                 }

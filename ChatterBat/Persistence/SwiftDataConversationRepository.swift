@@ -3,7 +3,7 @@ import SwiftData
 
 /// `ConversationRepository` backed by SwiftData.
 ///
-/// Owns a `ModelContext` and only ever converts to/from the plain
+/// Owns a `ModelContext` and its backing container, and only ever converts to/from the plain
 /// `Conversation`/`TranscriptMessage` structs at its public boundary —
 /// `PersistedConversation`/`PersistedMessage` instances never escape this
 /// file's mapping functions.
@@ -19,9 +19,14 @@ import SwiftData
 /// trade-off for correctness over marginal query performance.
 @MainActor
 final class SwiftDataConversationRepository: ConversationRepository {
+    // A retained mainContext does not keep its container alive. Production
+    // creates the container in AppDependencies.live(), so retain it here
+    // before that scope ends or later inserts/fetches trap inside SwiftData.
+    private let container: ModelContainer
     private let context: ModelContext
 
     init(context: ModelContext) {
+        self.container = context.container
         self.context = context
     }
 

@@ -29,4 +29,16 @@ struct ChatUsage: Hashable, Sendable {
     /// OpenRouter-reported cost in OpenRouter credits for this
     /// completion, or `nil` if not reported. Always `nil` for Venice.
     var costCredits: Decimal? = nil
+
+    /// Usage frames are snapshots, not increments. Merge missing fields
+    /// without double-counting repeated totals or losing a cost-only frame.
+    func merging(_ newer: ChatUsage) -> ChatUsage {
+        ChatUsage(
+            promptTokens: newer.promptTokens ?? promptTokens,
+            completionTokens: newer.completionTokens ?? completionTokens,
+            totalTokens: newer.totalTokens ?? totalTokens,
+            costUSD: newer.costUSD ?? costUSD,
+            costCredits: newer.costCredits ?? costCredits
+        )
+    }
 }

@@ -75,7 +75,7 @@ private struct AccountCard: View {
             }
 
             Text(
-                "Keys are stored only in the macOS Keychain. This does not " +
+                "Keys are stored only in this device's Keychain. This does not " +
                 "give ChatterBat its own account with \(service.displayName) " +
                 "— you're connecting your existing \(service.displayName) API key."
             )

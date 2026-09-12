@@ -8,10 +8,8 @@ import Foundation
 /// `AdvancedChatSettings` — already narrowed to what's applicable via
 /// `AdvancedChatSettings.applicable(to:)` by the caller — which adds:
 /// - `reasoning_effort` (both services, when non-`nil`)
-/// - `venice_parameters.{disable_thinking, strip_thinking_response}`
-///   (Venice only; never sent when both are `false`, matching Venice's
-///   documented defaults exactly so an all-default settings value never
-///   changes the request)
+/// - `venice_parameters.include_venice_system_prompt` (explicit opt-out
+///   by default), plus non-default thinking controls (Venice only)
 /// - `provider.{allow_fallbacks, data_collection, zdr}` (OpenRouter
 ///   only; each sub-field is only included when it differs from
 ///   OpenRouter's own documented default, for the same reason)
@@ -49,7 +47,9 @@ enum ChatRequestBuilder {
         }
 
         if service == .venice {
-            var veniceParameters: [String: Any] = [:]
+            var veniceParameters: [String: Any] = [
+                "include_venice_system_prompt": settings.venice.includeSystemPrompt
+            ]
             if settings.venice.disableThinking {
                 veniceParameters["disable_thinking"] = true
             }

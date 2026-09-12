@@ -132,7 +132,7 @@ struct MessageBubble: View {
         if let total = usage.totalTokens { parts.append("\(total) total") }
         var text = parts.isEmpty ? "Usage unknown" : parts.joined(separator: " · ") + " tokens"
         if let costUSD = usage.costUSD {
-            text += " · \(formattedUSD(costUSD))"
+            text += " · \(formattedUSD(costUSD)) reported"
         }
         if let costCredits = usage.costCredits {
             text += " · \(costCredits) credits"

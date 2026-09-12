@@ -155,4 +155,31 @@ final class ChatCoordinatorAdvancedSettingsTests: XCTestCase {
         XCTAssertGreaterThan(estimate.messageCount, 0)
         XCTAssertNotNil(estimate.percentOfContextWindow)
     }
+
+    @MainActor
+    func testDraftEstimateAndRoutingRespectBoundaryWithoutMutatingHistory() async throws {
+        let store = InMemoryCredentialStore()
+        try store.saveKey("fake", for: .venice)
+        let client = FakeChatStreamingClient(service: .venice, scriptedEvents: [.contentDelta("OK"), .finished(reason: "stop")])
+        let coordinator = ChatCoordinator(credentialStore: store, clients: [.venice: client])
+        let conversationID = UUID()
+        let model = makeModel(service: .venice)
+        coordinator.send(text: "Debug Swift", in: conversationID, using: model)
+        await waitUntil { coordinator.generationState == .idle }
+        coordinator.send(text: "New topic", in: conversationID, using: model)
+        await waitUntil { coordinator.generationState == .idle }
+        let history = coordinator.messages(for: conversationID)
+        let full = coordinator.autoRoutingContext(for: conversationID, draft: "Hello")
+        XCTAssertTrue(full.recent.contains("Debug Swift"))
+        coordinator.setContextBoundary(history[2].id, in: conversationID)
+        let bounded = coordinator.autoRoutingContext(for: conversationID, draft: "Hello")
+        XCTAssertFalse(bounded.recent.contains("Debug Swift"))
+        XCTAssertLessThan(bounded.required, full.required)
+        let withoutDraft = coordinator.contextUsageEstimate(for: conversationID, model: model)
+        let withDraft = coordinator.contextUsageEstimate(for: conversationID, model: model, draft: "Hello")
+        XCTAssertEqual(withDraft.characterCount, withoutDraft.characterCount + 5)
+        XCTAssertEqual(withDraft.messageCount, withoutDraft.messageCount + 1)
+        XCTAssertEqual(coordinator.messages(for: conversationID), history)
+        XCTAssertEqual(client.streamCallCount, 2, "Routing and estimates must not call inference.")
+    }
 }

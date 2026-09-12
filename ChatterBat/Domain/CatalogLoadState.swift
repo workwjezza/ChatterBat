@@ -6,7 +6,7 @@ import Foundation
 /// failure — per the brief: "Cache catalogs and show cache age/offline
 /// state," and a refresh failure should not blank out a previously
 /// successful catalog.
-enum CatalogLoadState: Sendable {
+enum CatalogLoadState: Sendable, Equatable {
     /// No key configured for this service, so there's nothing to fetch.
     /// Distinct from `.failed` — this isn't an error.
     case notConfigured

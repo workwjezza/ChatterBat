@@ -12,33 +12,205 @@ import Observation
 @MainActor
 final class AppViewModel {
     private(set) var conversations: [Conversation]
-    var selectedConversationID: Conversation.ID?
+    var selectedConversationID: Conversation.ID? {
+        didSet {
+            guard selectedConversationID != oldValue else { return }
+            activateSelectedSession()
+            isModelPickerPresented = false
+        }
+    }
     var isModelPickerPresented = false
     var searchText = ""
 
-    /// The model that would be used for the *next* message sent. Not
-    /// persisted per-conversation yet — this is a simple, single
-    /// app-wide "current selection," consistent with the single global
-    /// generation slot. Per the brief, selecting a model here must never
-    /// itself send a request.
-    var selectedModel: ModelInfo?
+    private var sessions: [UUID: ConversationSessionState] = [:]
+    /// The no-conversation surface can configure defaults without owning a chat.
+    private let setupSession = ConversationSessionState()
+    private(set) var currentSession = ConversationSessionState()
 
-    /// Advanced, per-send settings (reasoning effort, Venice thinking
-    /// controls, OpenRouter routing) — Stage 6. Same "simple app-wide
-    /// current selection" treatment as `selectedModel`: not persisted
-    /// per-conversation, and every field defaults to a no-op value, per
-    /// the brief's "advanced controls must stay hidden by default"
-    /// requirement.
-    var advancedChatSettings = AdvancedChatSettings()
+    // Selection actions operate on the active session. Detail views bind to
+    // the captured session object directly, never through a switching proxy.
+    var selectedModel: ModelInfo? {
+        get { currentSession.selectedModel }
+        set {
+            currentSession.selectedModel = newValue
+            currentSession.selectedIdentity = newValue?.identity
+        }
+    }
+    var advancedChatSettings: AdvancedChatSettings {
+        get { currentSession.advancedChatSettings }
+        set { currentSession.advancedChatSettings = newValue }
+    }
+    var agentToolsEnabled: Bool {
+        get { currentSession.agentToolsEnabled }
+        set { currentSession.agentToolsEnabled = newValue }
+    }
+    var autoModeEnabled: Bool {
+        get { currentSession.autoModeEnabled }
+        set { currentSession.autoModeEnabled = newValue }
+    }
+    private(set) var modelDefaults: ModelSelectionDefaults
+    var selectionNotice: String? {
+        get { currentSession.selectionNotice }
+        set { currentSession.selectionNotice = newValue }
+    }
+    private let selectionDefaultsStore: ModelSelectionDefaultsStore?
+    private var selectionCatalog: ModelPickerViewModel?
+    private var restoringDefault: Bool {
+        get { currentSession.resolvesSelectionFromCatalog }
+        set { currentSession.resolvesSelectionFromCatalog = newValue }
+    }
+    /// Prevent deletion while the coordinator still owns writes/approvals.
+    var activeConversationID: () -> UUID? = { nil }
+    var busyConversationIDs: () -> Set<UUID> = { [] }
 
-    /// Stage 7: whether the read-only agent tools beta is turned on
-    /// for the *next* message sent. Off by default — per the brief,
-    /// this is "an explicitly separate, optional mode from the
-    /// chat-first product," never something a user is opted into
-    /// silently. Same "simple app-wide current selection, not
-    /// persisted per-conversation" treatment as `selectedModel`/
-    /// `advancedChatSettings`.
-    var agentToolsEnabled = false
+    func canDelete(_ conversation: Conversation) -> Bool {
+        activeConversationID() != conversation.id && !busyConversationIDs().contains(conversation.id)
+    }
+
+    private func activateSelectedSession() {
+        guard let id = selectedConversationID else {
+            currentSession = setupSession
+            return
+        }
+        if let existing = sessions[id] {
+            currentSession = existing
+        } else {
+            let session = makeSession()
+            sessions[id] = session
+            currentSession = session
+        }
+    }
+
+    private func makeSession() -> ConversationSessionState {
+        let session = ConversationSessionState()
+        guard selectionCatalog != nil else { return session }
+        session.autoPolicy = modelDefaults.autoPolicy
+        session.autoModeEnabled = modelDefaults.pinnedModel == nil
+        session.selectedIdentity = modelDefaults.pinnedModel
+        session.resolvesSelectionFromCatalog = true
+        resolveSelection(in: session)
+        return session
+    }
+
+    private func registerConversationSessions() {
+        for conversation in conversations where sessions[conversation.id] == nil {
+            sessions[conversation.id] = makeSession()
+        }
+        activateSelectedSession()
+    }
+
+    func attachSelectionCatalog(_ catalog: ModelPickerViewModel) {
+        selectionCatalog = catalog
+        applyNewChatDefault()
+        registerConversationSessions()
+    }
+
+    /// Called after an explicit catalog refresh; never causes network activity.
+    func resolveSavedSelection() {
+        // Resolve each session's own identity/policy, never reapply a newer
+        // global default to previously created chats. Skip the running chat.
+        for session in Array(sessions.filter { $0.key != activeConversationID() && !busyConversationIDs().contains($0.key) }.values) + [setupSession] {
+            resolveSelection(in: session)
+        }
+    }
+
+    private func resolveSelection(in session: ConversationSessionState) {
+        guard session.resolvesSelectionFromCatalog || session.autoModeEnabled else { return }
+        let identity = session.autoModeEnabled ? session.autoPolicy?.anchor : session.selectedIdentity
+        session.selectedModel = identity.flatMap { selectionCatalog?.currentModel($0) }
+        if session.autoModeEnabled && session.autoPolicy == nil {
+            session.selectionNotice = "Auto needs setup: choose a model, then click Save Auto policy."
+        } else if session.selectedModel == nil {
+            session.selectionNotice = "This chat's model is unavailable. Refresh models or choose another model; no fallback will be sent."
+        } else {
+            session.selectionNotice = nil
+        }
+    }
+
+    func selectCurrentModel(_ model: ModelInfo, isBusy: Bool) {
+        guard !isBusy else { return }
+        restoringDefault = false
+        selectedModel = model
+        autoModeEnabled = false
+        selectionNotice = nil
+    }
+
+    func togglePinnedDefault(_ identity: ModelIdentity, isBusy: Bool) {
+        guard !isBusy, let catalog = selectionCatalog else { return }
+        if modelDefaults.pinnedModel == identity {
+            modelDefaults.pinnedModel = nil
+        } else {
+            guard catalog.isFavorite(identity), let model = catalog.currentModel(identity) else {
+                selectionNotice = "Refresh models before pinning this favorite. No fallback was selected."
+                return
+            }
+            modelDefaults.pinnedModel = model.identity
+            catalog.recordSelection(identity)
+        }
+        selectionDefaultsStore?.save(modelDefaults)
+        applyNewChatDefault()
+    }
+
+    func useAutoDefault(isBusy: Bool) {
+        guard !isBusy else { return }
+        modelDefaults.pinnedModel = nil
+        selectionDefaultsStore?.save(modelDefaults)
+        applyNewChatDefault()
+    }
+
+    /// Explicit action; pinning or catalog updates never replace this consent.
+    func saveAutoPolicyFromCurrentModel(isBusy: Bool) {
+        guard !isBusy else { return }
+        guard let selectedModel,
+              let current = selectionCatalog?.currentModel(selectedModel.identity),
+              let policy = SavedAutoPolicy(model: current, settings: advancedChatSettings) else {
+            selectionNotice = "Choose a current, directly selectable model with known prices, then save its Auto policy."
+            return
+        }
+        modelDefaults.autoPolicy = policy
+        modelDefaults.pinnedModel = nil
+        selectionDefaultsStore?.save(modelDefaults)
+        applyNewChatDefault()
+    }
+
+    func setCurrentAutoEnabled(_ enabled: Bool, isBusy: Bool) {
+        guard !isBusy else { return }
+        restoringDefault = false
+        autoModeEnabled = enabled
+        selectionNotice = nil
+        if enabled {
+            selectedModel = currentSession.autoPolicy.flatMap { selectionCatalog?.currentModel($0.anchor) }
+            if currentSession.autoPolicy == nil {
+                selectionNotice = "Auto needs setup: choose a model, then click Save Auto policy."
+            }
+        }
+    }
+
+    var effectiveChatSettings: AdvancedChatSettings {
+        currentSession.effectiveChatSettings
+    }
+
+    private func applyNewChatDefault() {
+        restoringDefault = true
+        selectionNotice = nil
+        currentSession.autoPolicy = modelDefaults.autoPolicy
+        if let pin = modelDefaults.pinnedModel {
+            autoModeEnabled = false
+            selectedModel = selectionCatalog?.currentModel(pin)
+            currentSession.selectedIdentity = pin
+            if selectedModel == nil {
+                selectionNotice = "Saved default \(pin.modelID) · \(pin.service.displayName) is unavailable. Refresh models or choose another model; no fallback will be sent."
+            }
+        } else {
+            autoModeEnabled = true
+            selectedModel = modelDefaults.autoPolicy.flatMap { selectionCatalog?.currentModel($0.anchor) }
+            if modelDefaults.autoPolicy == nil {
+                selectionNotice = "Auto needs setup: choose a model, then click Save Auto policy."
+            } else if selectedModel == nil {
+                selectionNotice = "Refresh models to resolve the saved Auto anchor."
+            }
+        }
+    }
 
     /// The tools to actually offer on the next send: every defined
     /// `AgentTool` when the toggle is on, otherwise none. `ChatCoordinator.send`
@@ -55,9 +227,12 @@ final class AppViewModel {
     /// unchanged.
     private var repository: ConversationRepository?
 
-    init(conversations: [Conversation] = []) {
+    init(conversations: [Conversation] = [], selectionDefaultsStore: ModelSelectionDefaultsStore? = nil) {
+        self.selectionDefaultsStore = selectionDefaultsStore
+        self.modelDefaults = selectionDefaultsStore?.load() ?? ModelSelectionDefaults()
         self.conversations = conversations
         self.selectedConversationID = conversations.first?.id
+        activateSelectedSession()
     }
 
     /// Loads persisted conversations (most-recently-updated first) and
@@ -75,6 +250,7 @@ final class AppViewModel {
         do {
             conversations = try repository.loadAllConversations()
             selectedConversationID = conversations.first?.id
+            registerConversationSessions()
         } catch {
             // A load failure must not be silently treated as "no
             // conversations yet" — that would look identical to a
@@ -106,6 +282,7 @@ final class AppViewModel {
         self.repository = repository
         conversations = initialConversations
         selectedConversationID = conversations.first?.id
+        registerConversationSessions()
     }
 
     var filteredConversations: [Conversation] {
@@ -138,6 +315,7 @@ final class AppViewModel {
     }
 
     func delete(_ conversation: Conversation) {
+        guard canDelete(conversation) else { return }
         if let repository {
             do {
                 try repository.deleteConversation(conversationID: conversation.id)
@@ -147,6 +325,8 @@ final class AppViewModel {
             }
         }
         conversations.removeAll { $0.id == conversation.id }
+        sessions[conversation.id]?.workspacePreview.disconnect()
+        sessions[conversation.id] = nil
         if selectedConversationID == conversation.id {
             selectedConversationID = conversations.first?.id
         }
@@ -265,16 +445,22 @@ final class AppViewModel {
     /// by `RootView` after `ChatCoordinator` appends/updates a message so
     /// the sidebar reflects new activity without polling.
     func refreshConversationMetadata(conversationID: UUID) {
+        refreshConversationMetadata(conversationIDs: [conversationID])
+    }
+
+    func refreshConversationMetadata(conversationIDs: Set<UUID>) {
+        guard !conversationIDs.isEmpty else { return }
         guard let repository else { return }
         do {
-            guard let updated = try repository.loadAllConversations().first(where: { $0.id == conversationID }) else {
-                return
+            let updated = try repository.loadAllConversations().filter { conversationIDs.contains($0.id) }
+            for conversation in updated {
+                if let index = conversations.firstIndex(where: { $0.id == conversation.id }) {
+                    conversations[index] = conversation
+                }
             }
-            guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
-            conversations[index] = updated
             conversations.sort { $0.updatedAt > $1.updatedAt }
         } catch {
-            assertionFailure("Failed to refresh conversation \(conversationID): \(error)")
+            assertionFailure("Failed to refresh conversation metadata: \(error)")
         }
     }
 }

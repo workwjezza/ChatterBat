@@ -90,6 +90,40 @@ final class OpenRouterModelCatalogFetcherTests: XCTestCase {
         }
     }
 
+    func testPartialNullAndMalformedCapabilityMetadataStaysUnknown() async {
+        let body = Data("""
+        {"data":[
+          {"id":"partial","architecture":{"output_modalities":["text"]}},
+          {"id":"null","architecture":{"input_modalities":null},"supported_parameters":null},
+          {"id":"malformed","architecture":{"input_modalities":"image"},"supported_parameters":"tools"},
+          {"id":"mixed","architecture":{"input_modalities":["image",42]},"supported_parameters":["tools",42]}
+        ]}
+        """.utf8)
+        let fetcher = OpenRouterModelCatalogFetcher(httpClient: FakeHTTPClient(scripted: .success(status: 200, body: body)))
+        guard case .success(let models) = await fetcher.fetchModels(apiKey: "fixture") else {
+            return XCTFail("Expected decoded models")
+        }
+        XCTAssertEqual(models.count, 4)
+        for model in models {
+            XCTAssertEqual(model.supportsTools, .unknown, model.modelID)
+            XCTAssertEqual(model.supportsReasoning, .unknown, model.modelID)
+            XCTAssertEqual(model.supportsVision, .unknown, model.modelID)
+        }
+    }
+
+    func testExplicitEmptyCapabilityListsMeanUnsupported() async {
+        let body = Data("""
+        {"data":[{"id":"empty","architecture":{"input_modalities":[]},"supported_parameters":[]}]}
+        """.utf8)
+        let fetcher = OpenRouterModelCatalogFetcher(httpClient: FakeHTTPClient(scripted: .success(status: 200, body: body)))
+        guard case .success(let models) = await fetcher.fetchModels(apiKey: "fixture"), let model = models.first else {
+            return XCTFail("Expected decoded model")
+        }
+        XCTAssertEqual(model.supportsTools, .unsupported)
+        XCTAssertEqual(model.supportsReasoning, .unsupported)
+        XCTAssertEqual(model.supportsVision, .unsupported)
+    }
+
     func testRequestUsesBearerAuthAndCorrectPath() async {
         let http = FakeHTTPClient(scripted: .success(status: 200, body: Data("{\"data\":[]}".utf8)))
         let fetcher = OpenRouterModelCatalogFetcher(httpClient: http)

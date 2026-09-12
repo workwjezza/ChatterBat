@@ -43,7 +43,8 @@ enum AgentToolExecutor {
     static let maxReadBytes = 200_000
 
     static func run(_ tool: AgentTool, using presenter: AgentToolPanelPresenting) async -> AgentToolExecutionResult {
-        guard let picked = await presenter.presentPanel(for: tool) else {
+        guard !Task.isCancelled else { return .cancelled }
+        guard let picked = await presenter.presentPanel(for: tool), !Task.isCancelled else {
             return .cancelled
         }
         let didStartAccessing = picked.startAccessingSecurityScopedResource()

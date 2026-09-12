@@ -39,12 +39,17 @@ struct AgentToolPanelPresenter: AgentToolPanelPresenting {
         }
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
-        let response = await withCheckedContinuation { continuation in
-            panel.begin { result in
-                continuation.resume(returning: result)
+        let response = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else { continuation.resume(returning: NSApplication.ModalResponse.cancel); return }
+                panel.begin { result in
+                    continuation.resume(returning: result)
+                }
             }
+        } onCancel: {
+            Task { @MainActor in panel.cancel(nil) }
         }
-        guard response == .OK, let url = panel.url else { return nil }
+        guard !Task.isCancelled, response == .OK, let url = panel.url else { return nil }
         return url
         #else
         return nil

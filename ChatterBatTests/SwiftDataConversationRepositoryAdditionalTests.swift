@@ -8,6 +8,35 @@ import SwiftData
 /// indirections reproducibly hung the test process on this toolchain.
 @MainActor
 final class SwiftDataConversationRepositoryAdditionalTests: XCTestCase {
+    func testRepositoryRetainsContainerAfterCreationScopeEnds() throws {
+        weak var observedContainer: ModelContainer?
+        var repository: SwiftDataConversationRepository?
+        do {
+            let container = ChatterBatModelContainer.inMemory()
+            observedContainer = container
+            repository = SwiftDataConversationRepository(context: container.mainContext)
+        }
+
+        // Fail safely rather than trapping inside SwiftData if ownership regresses.
+        guard observedContainer != nil else {
+            XCTFail("The repository must retain its container after the creation scope ends.")
+            return
+        }
+        if let repository {
+            let conversation = try repository.createConversation(title: "Lifetime regression")
+            let message = TranscriptMessage(role: .user, content: "Still alive", status: .completed)
+            try repository.appendMessage(message, toConversation: conversation.id)
+
+            XCTAssertEqual(try repository.loadAllConversations().map(\.id), [conversation.id])
+            XCTAssertEqual(try repository.loadMessages(for: conversation.id).map(\.content), ["Still alive"])
+        } else {
+            XCTFail("Expected a repository.")
+        }
+
+        repository = nil
+        XCTAssertNil(observedContainer, "Releasing the repository must not leak its container.")
+    }
+
     func testDeleteConversationCascadesToMessages() throws {
         let container = ChatterBatModelContainer.inMemory()
         let repository = SwiftDataConversationRepository(context: container.mainContext)

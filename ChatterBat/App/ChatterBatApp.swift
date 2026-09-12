@@ -6,6 +6,7 @@ import SwiftUI
 /// single, app-lifetime `AppDependencies` instance (Keychain, network
 /// clients, and the SwiftData-backed `ConversationRepository`/
 /// `ChatCoordinator`) that both scenes share.
+#if os(macOS)
 @main
 struct ChatterBatApp: App {
     private let dependencies = AppDependencies.live()
@@ -21,3 +22,4 @@ struct ChatterBatApp: App {
         }
     }
 }
+#endif

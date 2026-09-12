@@ -1,29 +1,18 @@
 import SwiftUI
 
-/// One row in the model picker: identity, service badge, secondary model
-/// ID, capability badges (only shown when actually `.supported` — unknown
-/// or unsupported capabilities show nothing, per the brief's rule against
-/// conflating "unknown" with "unsupported"), and a favorite toggle.
-///
-/// KNOWN CAVEAT: the favorite star is a `Button` nested inside the row's
-/// outer selection `Button`. SwiftUI/AppKit generally hit-tests the
-/// innermost button correctly for mouse clicks, but nested buttons are a
-/// known rough edge for keyboard/VoiceOver focus order on macOS. This has
-/// not been manually verified with VoiceOver or Tab-only navigation in
-/// this environment (no interactive display) — see docs/STATUS.md. If a
-/// future manual pass finds the star isn't independently reachable by
-/// keyboard, consider moving it to a `.contextMenu` or a swipe/hover
-/// action instead of a nested button.
+/// Selection and favorite are sibling controls, not nested buttons.
+/// Capability badges show reported support; the details popover and
+/// accessibility value explicitly distinguish unknown from unsupported.
 struct ModelRow: View {
     let model: ModelInfo
     var viewModel: ModelPickerViewModel
     let onSelect: (ModelInfo) -> Void
 
     var body: some View {
-        Button {
-            onSelect(model)
-        } label: {
-            HStack(alignment: .top) {
+        HStack(alignment: .top) {
+            Button {
+                onSelect(model)
+            } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(model.displayName)
@@ -35,13 +24,43 @@ struct ModelRow: View {
                         .foregroundStyle(.secondary)
                     detailRow
                 }
-                Spacer()
-                favoriteButton
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(model.displayName), \(model.service.displayName)")
+            .accessibilityValue(viewModel.capabilitySummary(for: model))
+            .accessibilityHint("Selects this model for the next message; does not enable capabilities")
+            capabilityDetailsButton
+            favoriteButton
+        }
+    }
+
+    @State private var showsCapabilities = false
+
+    private var capabilityDetailsButton: some View {
+        Button {
+            showsCapabilities = true
+        } label: {
+            Image(systemName: "info.circle")
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(model.displayName), \(model.service.displayName)")
-        .accessibilityHint("Selects this model for the next message")
+        .accessibilityLabel("Capabilities for \(model.displayName), \(model.service.displayName)")
+        .help(viewModel.capabilitySummary(for: model))
+        .popover(isPresented: $showsCapabilities) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Provider-reported capabilities").font(.headline)
+                ForEach(ModelPickerCapability.allCases) { capability in
+                    Text("\(capability.title): \(capability.status(in: model))")
+                }
+                Text("Metadata may be cached. This does not enable attachments, web browsing, image editing or coding execution in ChatterBat.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Close") { showsCapabilities = false }
+            }
+            .padding()
+            .frame(width: 320)
+        }
     }
 
     private var detailRow: some View {
@@ -49,7 +68,7 @@ struct ModelRow: View {
             if let contextLength = model.contextLength {
                 Text("\(contextLength.formatted()) ctx")
             }
-            Text(priceText)
+            ValuePriceLabel(text: priceText, highlighted: viewModel.isGoodValue(model))
             if model.supportsTools == .supported {
                 Text("Tools")
             }
@@ -75,7 +94,7 @@ struct ModelRow: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(viewModel.isFavorite(model.identity) ? .yellow : .secondary)
-        .accessibilityLabel(viewModel.isFavorite(model.identity) ? "Remove from favorites" : "Add to favorites")
+        .accessibilityLabel("\(viewModel.isFavorite(model.identity) ? "Remove from favorites" : "Add to favorites"): \(model.displayName), \(model.service.displayName)")
     }
 
     /// Formats known input/output pricing as USD per 1M tokens. Shows
@@ -84,6 +103,7 @@ struct ModelRow: View {
     /// pricing must never be displayed as free or zero.
     private var priceText: String {
         guard
+            ModelValuePolicy.score(model) != nil,
             let input = model.pricing.inputPerMillionTokensUSD,
             let output = model.pricing.outputPerMillionTokensUSD
         else {
@@ -92,10 +112,52 @@ struct ModelRow: View {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
         formatter.currencyCode = "USD"
-        formatter.maximumFractionDigits = 2
+        formatter.maximumFractionDigits = 6
         let inputString = formatter.string(from: input as NSDecimalNumber) ?? "$\(input)"
         let outputString = formatter.string(from: output as NSDecimalNumber) ?? "$\(output)"
-        return "\(inputString)/\(outputString) per 1M tok"
+        return "\(inputString) in / \(outputString) out · 1M tok"
+    }
+}
+
+/// One slow, low-opacity border animation; never animates layout or text.
+/// Only visible highlighted rows schedule updates. Inactive windows and
+/// Reduce Motion render a static gradient instead.
+private struct ValuePriceLabel: View {
+    let text: String
+    let highlighted: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if highlighted { Text("✦").accessibilityHidden(true) }
+            Text(text)
+        }
+        .padding(.horizontal, highlighted ? 5 : 0)
+        .padding(.vertical, highlighted ? 3 : 0)
+        .overlay {
+            if highlighted {
+                if reduceMotion || scenePhase != .active {
+                    border(angle: 0)
+                } else {
+                    TimelineView(.animation(minimumInterval: 1.0 / 15.0)) { timeline in
+                        border(angle: timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 12) * 30)
+                    }
+                }
+            }
+        }
+        .help(highlighted
+              ? "Low listed price: cheapest quarter (up to 3) among models with similar capabilities, context range, service and privacy. Uses 3 input tokens : 1 output token. Not a quality benchmark or billing quote."
+              : "Listed USD per million input/output tokens. Actual charges may differ with caching, context tiers or provider routing.")
+        .accessibilityLabel((highlighted ? "Low listed price. " : "") + text)
+    }
+
+    private func border(angle: Double) -> some View {
+        RoundedRectangle(cornerRadius: 6)
+            .strokeBorder(AngularGradient(colors: [.pink, .purple, .blue, .mint, .yellow, .pink],
+                                          center: .center, angle: .degrees(angle)), lineWidth: 1)
+            .opacity(0.55)
+            .allowsHitTesting(false)
     }
 }
 

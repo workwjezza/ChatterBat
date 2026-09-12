@@ -37,10 +37,10 @@ enum ChatStreamEvent: Equatable, Sendable {
     case toolCallDelta(index: Int, id: String?, name: String?, argumentsFragment: String)
 }
 
-/// Decodes one SSE `data:` payload string into a `ChatStreamEvent`.
+/// Decodes one SSE `data:` payload string into all its events.
 ///
-/// Returns `nil` for `"[DONE]"` (the sentinel both providers send at the
-/// very end of a stream) and for payloads that aren't valid JSON —
+/// Returns an empty array for `"[DONE]"` (the sentinel both providers send
+/// at the very end of a stream) and for payloads that aren't valid JSON —
 /// callers must not crash on either case; an invalid payload is treated
 /// as "no event this frame," not a fatal error, per the brief's
 /// requirement not to let a malformed frame crash the stream loop.
@@ -51,21 +51,29 @@ enum ChatStreamEvent: Equatable, Sendable {
 /// respectively — see `ChatUsage`'s doc comment for why these are
 /// never merged into one field.
 enum ChatStreamDecoder {
+    /// Compatibility helper for callers interested only in the first event.
+    /// Streaming must use decodeEvents: one frame can carry several events.
     static func decode(_ payload: String) -> ChatStreamEvent? {
+        decodeEvents(payload).first
+    }
+
+    static func decodeEvents(_ payload: String) -> [ChatStreamEvent] {
         if payload == "[DONE]" {
-            return nil
+            return []
         }
         guard
             let data = payload.data(using: .utf8),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
-            return nil
+            return []
         }
 
         if let errorObject = json["error"] as? [String: Any] {
             let message = errorObject["message"] as? String ?? "The provider reported a stream error."
-            return .streamError(message)
+            return [.streamError(message)]
         }
+
+        var events: [ChatStreamEvent] = []
 
         let choices = json["choices"] as? [[String: Any]] ?? []
         let firstChoice = choices.first
@@ -76,7 +84,7 @@ enum ChatStreamDecoder {
         if let delta = firstChoice?["delta"] as? [String: Any],
            let content = delta["content"] as? String,
            !content.isEmpty {
-            return .contentDelta(content)
+            events.append(.contentDelta(content))
         }
 
         // Stage 7: tool-call fragments. ChatCoordinator always sends
@@ -93,14 +101,15 @@ enum ChatStreamDecoder {
             let function = first["function"] as? [String: Any]
             let name = function?["name"] as? String
             let argumentsFragment = function?["arguments"] as? String ?? ""
-            return .toolCallDelta(index: index, id: id, name: name, argumentsFragment: argumentsFragment)
+            events.append(.toolCallDelta(index: index, id: id, name: name, argumentsFragment: argumentsFragment))
         }
 
         if let firstChoice, let finishReason = firstChoice["finish_reason"] as? String {
-            return .finished(reason: finishReason)
+            events.append(.finished(reason: finishReason))
         }
 
-        if let usageObject = json["usage"] as? [String: Any] {
+        if json["usage"] is [String: Any] || json["cost"] is [String: Any] {
+            let usageObject = json["usage"] as? [String: Any] ?? [:]
             // Venice: a top-level `cost: {usd, diem}` object, documented
             // sibling of `usage` on the non-streaming response; treated
             // the same way if present on a streaming frame. OpenRouter:
@@ -109,7 +118,7 @@ enum ChatStreamDecoder {
             let veniceCostObject = json["cost"] as? [String: Any]
             let costUSD = ModelCatalogDecoding.decimal(veniceCostObject?["usd"])
             let costCredits = ModelCatalogDecoding.decimal(usageObject["cost"])
-            return .usage(
+            events.append(.usage(
                 ChatUsage(
                     promptTokens: ModelCatalogDecoding.int(usageObject["prompt_tokens"]),
                     completionTokens: ModelCatalogDecoding.int(usageObject["completion_tokens"]),
@@ -117,9 +126,9 @@ enum ChatStreamDecoder {
                     costUSD: costUSD,
                     costCredits: costCredits
                 )
-            )
+            ))
         }
 
-        return .ignorable
+        return events.isEmpty ? [.ignorable] : events
     }
 }

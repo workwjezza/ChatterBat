@@ -10,8 +10,12 @@ import SwiftUI
 struct RootView: View {
     let dependencies: AppDependencies
     @State private var viewModel: AppViewModel
+    @State private var modelCatalog: ModelPickerViewModel
     @State private var isOnboardingPresented: Bool
+    @State private var isSettingsPresented = false
+    #if os(macOS)
     @Environment(\.openSettings) private var openSettings
+    #endif
 
     init(dependencies: AppDependencies) {
         self.dependencies = dependencies
@@ -21,45 +25,98 @@ struct RootView: View {
         // See AppViewModel.attachRepository's doc comment and
         // docs/DECISIONS.md for why the fetch cannot safely happen here
         // or in any later view lifecycle hook on this toolchain.
-        let viewModel = AppViewModel()
+        let viewModel = AppViewModel(selectionDefaultsStore: dependencies.modelSelectionDefaultsStore)
+        viewModel.busyConversationIDs = { dependencies.chatCoordinator.busyConversationIDs }
+        let catalog = dependencies.makeModelPickerViewModel()
+        viewModel.attachSelectionCatalog(catalog)
         viewModel.attachRepository(dependencies.conversationRepository, initialConversations: dependencies.initialConversations)
         _viewModel = State(initialValue: viewModel)
+        _modelCatalog = State(initialValue: catalog)
         _isOnboardingPresented = State(initialValue: !dependencies.onboardingStateStore.hasCompletedOnboarding())
     }
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(viewModel: viewModel)
+            SidebarView(viewModel: viewModel, coordinator: dependencies.chatCoordinator)
         } detail: {
             if let conversation = viewModel.selectedConversation {
                 ConversationDetailView(
                     conversation: conversation,
                     viewModel: viewModel,
-                    coordinator: dependencies.chatCoordinator
+                    session: viewModel.currentSession,
+                    coordinator: dependencies.chatCoordinator,
+                    modelCatalog: modelCatalog
                 )
+                .id(conversation.id)
             } else {
-                ContentUnavailableView(
-                    "No Conversation Selected",
-                    systemImage: "bubble.left.and.bubble.right",
-                    description: Text("Choose a conversation from the sidebar, or start a new one.")
-                )
+                VStack(spacing: 0) {
+                    ModelBookmarkBar(viewModel: viewModel, catalog: modelCatalog,
+                                      isBusy: false)
+                    ContentUnavailableView(
+                        "No Conversation Selected",
+                        systemImage: "bubble.left.and.bubble.right",
+                        description: Text("Choose a conversation from the sidebar, or start a new one.")
+                    )
+                }
             }
         }
         .sheet(isPresented: $viewModel.isModelPickerPresented) {
-            ModelPickerView(viewModel: dependencies.makeModelPickerViewModel()) { model in
-                viewModel.selectedModel = model
+            let targetConversationID = viewModel.selectedConversationID
+            ModelPickerView(viewModel: modelCatalog) { model in
+                guard viewModel.selectedConversationID == targetConversationID else { return }
+                viewModel.selectCurrentModel(model, isBusy: targetConversationID.map { dependencies.chatCoordinator.isBusy($0) } ?? false)
             }
         }
         .sheet(isPresented: $isOnboardingPresented) {
             OnboardingView(
-                onOpenSettings: { openSettings() },
+                onOpenSettings: { openAccountSettings() },
                 onDismiss: {
                     dependencies.onboardingStateStore.markOnboardingCompleted()
                     isOnboardingPresented = false
                 }
             )
         }
+        #if os(iOS)
+        .sheet(isPresented: $isSettingsPresented) {
+            NavigationStack {
+                SettingsView(dependencies: dependencies)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { isSettingsPresented = false }
+                        }
+                    }
+            }
+        }
+        #endif
+        .toolbar {
+            #if os(iOS)
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Settings", systemImage: "gearshape") { isSettingsPresented = true }
+                    .accessibilityLabel("Settings")
+            }
+            #endif
+        }
         .navigationTitle(viewModel.selectedConversation?.title ?? "ChatterBat")
+        .onChange(of: modelCatalog.catalogStates) { _, _ in
+            viewModel.resolveSavedSelection()
+        }
+        .onChange(of: dependencies.chatCoordinator.transcripts) { old, new in
+            // Update metadata for background chats too, not just the detail
+            // currently visible. Session configuration remains untouched.
+            let changed = Set(new.keys.filter { old[$0] != new[$0] })
+            viewModel.refreshConversationMetadata(conversationIDs: changed)
+        }
+        .onChange(of: dependencies.chatCoordinator.generationStates) { _, _ in
+            viewModel.resolveSavedSelection()
+        }
+    }
+
+    private func openAccountSettings() {
+        #if os(macOS)
+        openSettings()
+        #else
+        isSettingsPresented = true
+        #endif
     }
 }
 

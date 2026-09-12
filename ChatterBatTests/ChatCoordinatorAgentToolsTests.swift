@@ -182,7 +182,7 @@ final class ChatCoordinatorAgentToolsTests: XCTestCase {
     }
 
     @MainActor
-    func testStopGenerationWhileAwaitingApprovalDeniesThePendingCall() async throws {
+    func testStopGenerationWhileAwaitingApprovalDeniesWithoutFollowup() async throws {
         let store = InMemoryCredentialStore()
         try store.saveKey("key", for: .venice)
         let client = FakeChatStreamingClient(service: .venice, scriptedEvents: [
@@ -204,6 +204,7 @@ final class ChatCoordinatorAgentToolsTests: XCTestCase {
         XCTAssertEqual(presenter.presentedForTools, [], "Stop must deny, never approve, the pending call.")
         let toolMessage = coordinator.messages(for: conversationID).first { $0.role == .tool }
         XCTAssertEqual(toolMessage?.status, .toolDenied)
+        XCTAssertEqual(client.streamCallCount, 1, "Stop must not start a billable denial follow-up.")
     }
 
     @MainActor

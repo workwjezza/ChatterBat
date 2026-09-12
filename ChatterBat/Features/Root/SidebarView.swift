@@ -8,6 +8,7 @@ import SwiftUI
 /// since those are different situations for the user.
 struct SidebarView: View {
     var viewModel: AppViewModel
+    var coordinator: ChatCoordinator? = nil
     @State private var renamingConversation: Conversation?
     @State private var renameText = ""
     @State private var exportingConversation: Conversation?
@@ -19,6 +20,21 @@ struct SidebarView: View {
             get: { viewModel.selectedConversationID },
             set: { viewModel.selectedConversationID = $0 }
         )) {
+            if let coordinator {
+                Section("Execution") {
+                    Picker("Concurrent chats", selection: Binding(
+                        get: { coordinator.maxConcurrentTurns },
+                        set: { coordinator.setConcurrencyLimit($0) }
+                    )) {
+                        ForEach(1...4, id: \.self) { Text("\($0)").tag($0) }
+                    }
+                    Text("\(coordinator.activeTurnCount) active · \(coordinator.queuedConversationIDs.count)/\(coordinator.maxQueuedTurns) queued")
+                        .font(.caption)
+                    Button("Stop all", role: .destructive) { coordinator.stopAllGenerations() }
+                        .disabled(coordinator.busyConversationIDs.isEmpty)
+                        .help("Cancel active and queued chats without starting tool follow-ups. Upstream billing may still continue.")
+                }
+            }
             if viewModel.filteredConversations.isEmpty {
                 if viewModel.searchText.isEmpty {
                     // Genuinely no conversations yet, as opposed to a
@@ -34,7 +50,8 @@ struct SidebarView: View {
                 }
             } else {
                 ForEach(viewModel.filteredConversations) { conversation in
-                    ConversationRow(conversation: conversation)
+                    ConversationRow(conversation: conversation,
+                                    activity: coordinator.map { executionLabel($0, for: conversation.id) })
                         .tag(conversation.id)
                         .contextMenu {
                             Button("Rename…") {
@@ -44,9 +61,13 @@ struct SidebarView: View {
                             Button("Export…") {
                                 exportingConversation = conversation
                             }
+                            if let coordinator, coordinator.isBusy(conversation.id) {
+                                Button("Stop this chat") { coordinator.stopGeneration(in: conversation.id) }
+                            }
                             Button("Delete", role: .destructive) {
                                 viewModel.delete(conversation)
                             }
+                            .disabled(!viewModel.canDelete(conversation))
                         }
                 }
             }
@@ -131,10 +152,16 @@ struct SidebarView: View {
             }
         }
     }
+
+    private func executionLabel(_ coordinator: ChatCoordinator, for id: UUID) -> String {
+        if let position = coordinator.queuePosition(for: id) { return "Queued · position \(position)" }
+        return coordinator.state(for: id) == .idle ? "" : coordinator.state(for: id).title
+    }
 }
 
 private struct ConversationRow: View {
     let conversation: Conversation
+    var activity: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -145,6 +172,9 @@ private struct ConversationRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+            if let activity, !activity.isEmpty {
+                Text(activity).font(.caption).foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
@@ -153,6 +183,7 @@ private struct ConversationRow: View {
                 ? conversation.title
                 : "\(conversation.title). \(conversation.lastMessagePreview)"
         )
+        .accessibilityValue(activity ?? "")
     }
 }
 

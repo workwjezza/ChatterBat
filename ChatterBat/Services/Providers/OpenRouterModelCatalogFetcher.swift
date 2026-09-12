@@ -63,19 +63,13 @@ struct OpenRouterModelCatalogFetcher: ModelCatalogFetching {
         let completionPerToken = ModelCatalogDecoding.decimal(pricing["completion"])
         let million = Decimal(1_000_000)
 
-        let supportedParameters = entry["supported_parameters"] as? [String] ?? []
-        let supportsTools = supportedParameters.contains("tools")
-            ? CapabilitySupport.supported
-            : (entry["supported_parameters"] != nil ? .unsupported : .unknown)
-        let supportsReasoning = supportedParameters.contains("reasoning")
-            ? CapabilitySupport.supported
-            : (entry["supported_parameters"] != nil ? .unsupported : .unknown)
+        let supportedParameters = entry["supported_parameters"] as? [String]
+        let supportsTools = CapabilitySupport.from(supportedParameters.map { $0.contains("tools") })
+        let supportsReasoning = CapabilitySupport.from(supportedParameters.map { $0.contains("reasoning") })
 
         let architecture = entry["architecture"] as? [String: Any]
-        let inputModalities = architecture?["input_modalities"] as? [String] ?? []
-        let supportsVision: CapabilitySupport = architecture == nil
-            ? .unknown
-            : (inputModalities.contains("image") ? .supported : .unsupported)
+        let inputModalities = architecture?["input_modalities"] as? [String]
+        let supportsVision = CapabilitySupport.from(inputModalities.map { $0.contains("image") })
 
         return ModelInfo(
             identity: ModelIdentity(service: .openRouter, modelID: id),
