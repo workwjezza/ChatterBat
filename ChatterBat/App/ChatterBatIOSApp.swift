@@ -10,7 +10,7 @@ struct ChatterBatIOSApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(dependencies: dependencies)
+            MobileRootView(dependencies: dependencies)
         }
     }
 }

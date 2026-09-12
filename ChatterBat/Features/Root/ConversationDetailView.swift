@@ -148,6 +148,26 @@ struct ConversationDetailView: View {
                 }
             }
             #endif
+            #if os(iOS)
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    viewModel.isModelPickerPresented = true
+                } label: {
+                    Image(systemName: "cpu")
+                }
+                .accessibilityLabel("Choose model")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Toggle(isOn: Binding(get: { session.autoModeEnabled }, set: {
+                    guard viewModel.selectedConversationID == conversation.id else { return }
+                    viewModel.setCurrentAutoEnabled($0, isBusy: isGeneratingHere)
+                })) {
+                    Image(systemName: session.autoModeEnabled ? "wand.and.stars" : "wand.and.stars.inverse")
+                }
+                .disabled(isGeneratingHere)
+                .accessibilityLabel("Automatic model selection")
+            }
+            #endif
         }
         .alert("Auto selection unavailable", isPresented: Binding(
             get: { autoError != nil }, set: { if !$0 { autoError = nil } }

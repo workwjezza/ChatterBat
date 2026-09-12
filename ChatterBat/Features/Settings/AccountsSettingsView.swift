@@ -10,6 +10,30 @@ struct AccountsSettingsView: View {
     var viewModel: AccountSettingsViewModel
 
     var body: some View {
+        #if os(iOS)
+        ScrollView {
+            LazyVStack(spacing: 16) {
+                ForEach(AIService.allCases) { service in
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(service.displayName)
+                            .font(.title3.bold())
+                        AccountCard(service: service, viewModel: viewModel)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(.quaternary, lineWidth: 1)
+                    }
+                }
+            }
+            .padding(16)
+        }
+        .onAppear {
+            viewModel.refreshStoredKeyPresence()
+        }
+        #else
         Form {
             ForEach(AIService.allCases) { service in
                 Section(service.displayName) {
@@ -21,6 +45,7 @@ struct AccountsSettingsView: View {
         .onAppear {
             viewModel.refreshStoredKeyPresence()
         }
+        #endif
     }
 }
 
@@ -43,6 +68,39 @@ private struct AccountCard: View {
             .textFieldStyle(.roundedBorder)
             .accessibilityLabel("\(service.displayName) API key")
 
+            #if os(iOS)
+            VStack(alignment: .leading, spacing: 10) {
+                Button("Save & Verify") {
+                    Task {
+                        isVerifying = true
+                        await viewModel.saveAndVerify(service)
+                        isVerifying = false
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .disabled(isVerifying || (viewModel.draftKeys[service] ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
+
+                if isConfigured {
+                    Button("Re-verify") {
+                        Task {
+                            isVerifying = true
+                            await viewModel.verifyConnection(service)
+                            isVerifying = false
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isVerifying)
+
+                    Button("Disconnect", role: .destructive) {
+                        viewModel.disconnect(service)
+                    }
+                }
+
+                Link("Get an API key", destination: service.keyManagementURL)
+                    .font(.subheadline)
+            }
+            #else
             HStack {
                 Button("Save & Verify") {
                     Task {
@@ -73,6 +131,7 @@ private struct AccountCard: View {
                 Link("Get an API key", destination: service.keyManagementURL)
                     .font(.caption)
             }
+            #endif
 
             Text(
                 "Keys are stored only in this device's Keychain. This does not " +

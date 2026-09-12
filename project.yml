@@ -33,6 +33,8 @@ targets:
       - path: ChatterBat
         excludes:
           - App/ChatterBatIOSApp.swift
+          - Features/Root/MobileRootView.swift
+          - Features/Settings/MobileSettingsView.swift
     settings:
       base:
         PRODUCT_NAME: ChatterBat

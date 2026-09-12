@@ -45,7 +45,11 @@ struct OnboardingView: View {
             }
         }
         .padding(24)
+        #if os(macOS)
         .frame(width: 460, height: 340)
+        #else
+        .frame(maxWidth: .infinity, minHeight: 360)
+        #endif
     }
 
     private func bulletPoint(_ text: String) -> some View {

@@ -54,7 +54,11 @@ struct ModelPickerView: View {
             .padding(.horizontal)
             .padding(.bottom, 8)
         }
+        #if os(macOS)
         .frame(width: 640, height: 660)
+        #else
+        .frame(maxWidth: .infinity, minHeight: 520)
+        #endif
         .task {
             await viewModel.loadAllConfiguredCatalogs()
         }

@@ -296,6 +296,17 @@ final class AppViewModel {
         conversations.first { $0.id == selectedConversationID }
     }
 
+    /// Returns the stable in-memory session for a conversation without
+    /// changing selection. Mobile navigation pushes a detail view instead of
+    /// using the macOS split-view selection binding, so it needs this explicit
+    /// lookup to preserve each chat's draft and model settings.
+    func session(for conversationID: UUID) -> ConversationSessionState {
+        if let existing = sessions[conversationID] { return existing }
+        let session = makeSession()
+        sessions[conversationID] = session
+        return session
+    }
+
     /// Creates a new conversation (persisted immediately if a repository
     /// is attached) and selects it.
     func startNewConversation() {

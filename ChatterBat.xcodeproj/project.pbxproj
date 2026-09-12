@@ -56,6 +56,7 @@
 		35249AEFA5BB3A0714804414 /* AutoScrollPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = B05D0589BFA8CAD57E42424E /* AutoScrollPolicy.swift */; };
 		367D800E332FAA2F05A79845 /* ChatCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AA75BE8350741E65C971430 /* ChatCoordinator.swift */; };
 		36AB016E69688C6D95CFFC19 /* AccountSettingsViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEC5FE6FD125A9902AA3618F /* AccountSettingsViewModelTests.swift */; };
+		36CCDDAB9D42B9198BE23B05 /* MobileRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 098099A7A14B395428ADC22D /* MobileRootView.swift */; };
 		36FCE75FF558105731CFF8D9 /* AppViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A8B6FC2F9366AAE8BB0C598 /* AppViewModelTests.swift */; };
 		37DE5FC01AFF2505BF70F759 /* AdvancedChatSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2539D53F03EDEEDB6DE3477E /* AdvancedChatSettings.swift */; };
 		3807F1DEE64017088571319D /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D92DC2DBF0B32E706F6C267 /* ComposerView.swift */; };
@@ -91,6 +92,7 @@
 		53DF5392F89ADCE1E45ED6DB /* ChatCoordinatorAdvancedSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B5199020B139C80420F121F /* ChatCoordinatorAdvancedSettingsTests.swift */; };
 		53FC92F609582462DE65F29C /* AgentToolApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EBB9FC77626B33447373E5B /* AgentToolApprovalView.swift */; };
 		5544CD34436A87E28F74F272 /* ContextUsageEstimateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 162E9B46742D483BC4671914 /* ContextUsageEstimateTests.swift */; };
+		55E2627C95531EAF5A1D4B21 /* MobileSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D9D43AC9C985F84C05FDCBD /* MobileSettingsView.swift */; };
 		581807C5061C1C0F65DD1A2A /* WorkspaceReadRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35675F47E65492D2D1284D20 /* WorkspaceReadRegistry.swift */; };
 		597CA56227AC64DAF3D1C6B3 /* AppViewModelRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF63BFCBA85536E8560738A2 /* AppViewModelRepositoryTests.swift */; };
 		5B2359D6FA44EA9E5C4BD021 /* UserDefaultsModelPreferencesStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00D1674C307D9BBFBA72FF9F /* UserDefaultsModelPreferencesStoreTests.swift */; };
@@ -321,6 +323,7 @@
 		01F71CA002336AB3DB1B27BC /* VeniceModelCatalogFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeniceModelCatalogFetcher.swift; sourceTree = "<group>"; };
 		04797B69810B3F2A5A6C6213 /* ProbeProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeProtocol.swift; sourceTree = "<group>"; };
 		08A90D6E84540B91EA79CBC6 /* ChatterBatIPCStandaloneRejectedProbe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ChatterBatIPCStandaloneRejectedProbe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		098099A7A14B395428ADC22D /* MobileRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileRootView.swift; sourceTree = "<group>"; };
 		0A48166CB92D76FA54A73169 /* WorkspacePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePreviewView.swift; sourceTree = "<group>"; };
 		0A58D5E4F7D623B39DBFA88D /* ModelPickerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPickerViewModel.swift; sourceTree = "<group>"; };
 		0A8B6FC2F9366AAE8BB0C598 /* AppViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModelTests.swift; sourceTree = "<group>"; };
@@ -381,6 +384,7 @@
 		6B5199020B139C80420F121F /* ChatCoordinatorAdvancedSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatCoordinatorAdvancedSettingsTests.swift; sourceTree = "<group>"; };
 		6C69BFF9E91322D064837257 /* ChatStreamDecoderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStreamDecoderTests.swift; sourceTree = "<group>"; };
 		6D3B4526B58F0A84BC7230A7 /* ChatCoordinatorAgentToolsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatCoordinatorAgentToolsTests.swift; sourceTree = "<group>"; };
+		6D9D43AC9C985F84C05FDCBD /* MobileSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileSettingsView.swift; sourceTree = "<group>"; };
 		6DBD9C1C6BBDC57F02D28C2B /* ConversationRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationRepository.swift; sourceTree = "<group>"; };
 		704D562C89FCCAC7F6E74CFB /* MessageContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageContentView.swift; sourceTree = "<group>"; };
 		71C9ADA5F249BC00ADAF4F7F /* WorkspacePreviewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePreviewModel.swift; sourceTree = "<group>"; };
@@ -604,6 +608,7 @@
 			children = (
 				2F743664A19FF240FBA0CD91 /* AccountSettingsViewModel.swift */,
 				D87F9C3CBC9ED08FED9DE2A5 /* AccountsSettingsView.swift */,
+				6D9D43AC9C985F84C05FDCBD /* MobileSettingsView.swift */,
 				BEF5A938004D6689584F9A91 /* SettingsView.swift */,
 			);
 			path = Settings;
@@ -633,6 +638,7 @@
 				E7C43F800785A97F75E359A4 /* ConversationExportDocument.swift */,
 				3C49701B343C7CCDC7245C60 /* MessageBubble.swift */,
 				704D562C89FCCAC7F6E74CFB /* MessageContentView.swift */,
+				098099A7A14B395428ADC22D /* MobileRootView.swift */,
 				E803FA57C8DDEF87C6586AD1 /* ModelBookmarkBar.swift */,
 				819A422C901BF9B1FAA41A65 /* RootView.swift */,
 				E5AF8D3E93040ECF482632D3 /* SidebarView.swift */,
@@ -1286,6 +1292,8 @@
 				C114BBFA487F85656AB4D02F /* MessageContentBlock.swift in Sources */,
 				BF69676428890C19403D8C93 /* MessageContentView.swift in Sources */,
 				9869F14C11FD549762A3CF03 /* MessageStatusCoding.swift in Sources */,
+				36CCDDAB9D42B9198BE23B05 /* MobileRootView.swift in Sources */,
+				55E2627C95531EAF5A1D4B21 /* MobileSettingsView.swift in Sources */,
 				68C2ECE8EF74BDE5B38A0AEF /* ModelBookmarkBar.swift in Sources */,
 				B5B086E68C30F33D64530E69 /* ModelCatalogDecoding.swift in Sources */,
 				E2684A89497B8039232E99D6 /* ModelCatalogFetchOutcome.swift in Sources */,
